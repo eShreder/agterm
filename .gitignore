@@ -1,0 +1,12 @@
+# downloaded prebuilt libghostty (never committed — see scripts/setup.sh)
+GhosttyKit.xcframework/
+agt/Resources/ghostty/
+agt/Resources/terminfo/
+*.tar.gz
+
+# build artifacts
+build/
+.build/
+agt.xcodeproj/
+
+.DS_Store
