@@ -97,12 +97,37 @@ targets:
       - sdk: MetalKit.framework
       - sdk: QuartzCore.framework
 
+  agtUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - agtUITests
+    dependencies:
+      - target: agt
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.umputun.agtUITests
+        TEST_TARGET_NAME: agt
+        CODE_SIGN_IDENTITY: "-"
+        GENERATE_INFOPLIST_FILE: YES
+        # UI test code drives XCTest APIs that aren't Sendable-clean; the strict
+        # checking the app/agtCore use isn't needed (and breaks) here.
+        SWIFT_STRICT_CONCURRENCY: minimal
+        # the runner is ad-hoc signed; hardened runtime on the test bundle causes
+        # a Team-ID mismatch when the runner loads the xctest bundle.
+        ENABLE_HARDENED_RUNTIME: NO
+
 schemes:
   agt:
     build:
       targets:
         agt: all
+        agtUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - agtUITests
     archive:
       config: Release

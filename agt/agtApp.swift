@@ -23,7 +23,11 @@ struct agtApp: App {
     /// seeds a single default workspace with one session at $HOME.
     @MainActor
     private static func restoredStore() -> AppStore {
-        let persistence = PersistenceStore()
+        // UI tests pass AGT_STATE_DIR to isolate persistence in a temp dir so a
+        // run never touches the user's real workspaces.json.
+        let persistence = ProcessInfo.processInfo.environment["AGT_STATE_DIR"]
+            .map { PersistenceStore(directory: URL(fileURLWithPath: $0, isDirectory: true)) }
+            ?? PersistenceStore()
         let store = AppStore(persistence: persistence)
         let snapshot = persistence.load()
         guard !snapshot.workspaces.isEmpty else {

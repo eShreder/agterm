@@ -58,9 +58,13 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     }
 
     deinit {
-        // single teardown body; destroySurface is idempotent via its
-        // isDestroyed / surface == nil guards.
-        destroySurface()
+        // free directly here, not via destroySurface(): deinit is nonisolated and
+        // can't call the @MainActor method. surface/configCStrings are
+        // nonisolated(unsafe) and freed with C calls, so this is safe. (Normal
+        // teardown goes through destroySurface() on the main actor; this is the
+        // safety net for a view dropped without an explicit close.)
+        if let surface { ghostty_surface_free(surface) }
+        configCStrings.forEach { free($0) }
     }
 
     // MARK: - Callback entry points
