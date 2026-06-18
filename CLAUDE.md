@@ -21,6 +21,8 @@
 
 The app must build and `swift test` must stay green after every change.
 
+- **`run.sh` re-activates a stale instance.** `scripts/run.sh` ends in `open agt.app` with no kill, so if an instance is already running macOS just brings it to front — the freshly built binary is NOT loaded. To actually test a rebuild, fully quit the running app first (then `open`, or launch `…/Debug/agt.app` directly / `open -n`); otherwise visual verification runs against the old build and a real fix looks like it failed.
+
 ## GhosttyKit.xcframework
 
 - Source: the `thdxg/ghostty` fork's release artifacts, pinned in `scripts/setup.sh` to tag `build-2026-06-14`. Bump the `TAG` variable deliberately when adopting a newer libghostty.
@@ -75,6 +77,7 @@ The app must build and `swift test` must stay green after every change.
 - **Surface lifecycle.** `Session` owns its `GhosttySurfaceView` (`@ObservationIgnored`). The detail pane swaps surfaces via `.id(session.id)`; `dismantleNSView` is a no-op. `ghostty_surface_free` runs only in `destroySurface()` (reached via `teardown()` on close). This single-owner, single-free rule is what makes passing the view as unretained `userdata` safe.
 - **Non-zero backing size.** Create the surface only when the view has a non-zero backing size, else the Metal layer renders blank. `pendingSurfaceCreation` defers creation until `setFrameSize` reports a real size.
 - **strdup buffer lifetime.** `working_directory` (and `initial_input`) `const char*` buffers must outlive `ghostty_surface_new`; they are held in a `nonisolated(unsafe)` array and freed only in `destroySurface()`.
+- **Cursor shape is a config default, not set in code.** `agt/Resources/ghostty-defaults.conf` (loaded first in `GhosttyApp.loadConfig`, so a user's `~/.config/ghostty/config` still overrides it) pins a steady block cursor with `cursor-style = block` + `shell-integration-features = no-cursor`. The shell-integration `cursor` feature re-emits a DECSCUSR bar (`\e[5 q`) on every prompt and resets to the config default while a command runs, so setting `cursor-style` alone can't stop the bar-at-prompt — disabling the feature with `no-cursor` is what keeps the cursor a block everywhere.
 
 ## C-callback isolation
 
