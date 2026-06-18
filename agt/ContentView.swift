@@ -123,13 +123,14 @@ struct ContentView: View {
             Spacer(minLength: 0)
             GitStatusPill(status: store.activeSession?.gitStatus)
         }
-        // symmetric vertical padding centers the content by construction (no reliance
-        // on frame alignment); minHeight keeps the bar a consistent height when empty.
-        // extra trailing inset keeps the right-aligned content clear of the window's
-        // rounded bottom-right corner.
+        // more bottom than top padding nudges the pill up a touch: the right-aligned pill sits by
+        // the window's rounded bottom-right corner, whose clipping makes a geometrically-centered
+        // pill read as slightly low. minHeight keeps the bar a consistent height when empty; the
+        // extra trailing inset keeps the content clear of that rounded corner.
         .padding(.leading, 12)
         .padding(.trailing, 20)
-        .padding(.vertical, 4)
+        .padding(.top, 2.5)
+        .padding(.bottom, 5.5)
         .frame(maxWidth: .infinity, minHeight: 22)
         // blend with the terminal: same background, so the status bar reads as a
         // continuation of it (separated only by the hairline above).
