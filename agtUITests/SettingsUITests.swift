@@ -13,9 +13,8 @@ final class SettingsUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
-        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session should exist")
+        app.launchForUITest()
+        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForHittable(timeout: 20), "seeded session should be hittable")
     }
 
     override func tearDown() async throws {
@@ -28,14 +27,11 @@ final class SettingsUITests: XCTestCase {
 
         // the three tabs are reachable.
         for tab in ["General", "Appearance", "Key Mapping"] {
-            XCTAssertTrue(app.buttons[tab].firstMatch.waitForExistence(timeout: 5), "Settings should have a \(tab) tab")
+            XCTAssertTrue(app.buttons[tab].firstMatch.waitForHittable(timeout: 12), "Settings should have a \(tab) tab")
         }
 
-        app.buttons["Appearance"].firstMatch.click()
-
         // pick a known theme from the theme picker and confirm it lands in settings.json.
-        let themePicker = app.descendants(matching: .any).matching(identifier: "settings-theme").firstMatch
-        XCTAssertTrue(themePicker.waitForExistence(timeout: 5), "Appearance should have a theme picker")
+        let themePicker = settingsControl(tab: "Appearance", control: "settings-theme")
         themePicker.click()
         let choice = app.menuItems["Alabaster"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5), "the theme menu should list themes")
@@ -45,11 +41,7 @@ final class SettingsUITests: XCTestCase {
     }
 
     func testWindowOpacitySliderPersists() throws {
-        app.typeKey(",", modifierFlags: .command)
-        app.buttons["Appearance"].firstMatch.click()
-
-        let opacity = app.sliders["settings-bg-opacity"].firstMatch
-        XCTAssertTrue(opacity.waitForExistence(timeout: 5), "Appearance should have a background-opacity slider")
+        let opacity = settingsControl(tab: "Appearance", control: "settings-bg-opacity")
         opacity.adjust(toNormalizedSliderPosition: 0.5)
 
         XCTAssertTrue(poll { (self.settingsDouble("backgroundOpacity") ?? 1) < 1 },
@@ -57,18 +49,48 @@ final class SettingsUITests: XCTestCase {
     }
 
     func testNotificationsTogglePersists() throws {
-        app.typeKey(",", modifierFlags: .command)
-        app.buttons["General"].firstMatch.click()
         // type-agnostic match (a grouped-Form Toggle surfaces as a switch/checkbox depending on macOS)
-        let toggle = app.descendants(matching: .any).matching(identifier: "settings-notifications").firstMatch
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "General should have a notifications toggle")
+        let toggle = settingsControl(tab: "General", control: "settings-notifications")
         toggle.click() // turn it off (default on)
 
         XCTAssertTrue(poll { self.settingsBool("notificationsEnabled") == false },
                       "turning notifications off should persist notificationsEnabled=false")
     }
 
+    func testCompactToolbarTogglePersists() throws {
+        // type-agnostic match (a grouped-Form Toggle surfaces as a switch/checkbox depending on macOS)
+        let toggle = settingsControl(tab: "Appearance", control: "settings-compact-toolbar")
+        toggle.click() // turn it on (default off)
+
+        XCTAssertTrue(poll { self.settingsBool("compactToolbar") == true },
+                      "turning compact toolbar on should persist compactToolbar=true")
+    }
+
     // MARK: - Helpers
+
+    /// Opens the Settings window (Cmd+,) if needed, switches to `tab`, and returns the control with
+    /// `control` id once it is hittable — RETRYING the tab click each tick. A stale Settings window
+    /// (restored from a prior test on a different tab) can be half-open or non-key when the first
+    /// click lands, silently dropping it so the tab never switches and the control never renders;
+    /// retrying until the control is actually hittable is robust to that.
+    @discardableResult
+    private func settingsControl(tab: String, control: String, timeout: TimeInterval = 12,
+                                 file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let target = app.descendants(matching: .any).matching(identifier: control).firstMatch
+        let tabButton = app.buttons[tab].firstMatch
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if target.exists, target.isHittable { return target }
+            if tabButton.exists, tabButton.isHittable {
+                tabButton.click()
+            } else {
+                app.typeKey(",", modifierFlags: .command) // settings not open yet (or lost) — (re)open
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail("Settings '\(tab)' control '\(control)' never became hittable", file: file, line: line)
+        return target
+    }
 
     private func poll(_ condition: () -> Bool, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

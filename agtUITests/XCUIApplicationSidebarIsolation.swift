@@ -1,14 +1,40 @@
 import XCTest
 
 extension XCUIApplication {
-    /// Launch arguments that make an isolated UI test deterministically start with the sidebar
-    /// visible, regardless of the host's persisted NSSplitView collapse (which lives in the bundle's
-    /// GLOBAL UserDefaults, not under `AGT_STATE_DIR`). Keep AppKit window restoration enabled so the
-    /// main window is ordered forward the same way as a normal launch; the sentinel tells `ContentView`
-    /// to apply a test-only AppKit split-view fixup after the window attaches. Production never sees
-    /// the sentinel, so its remember-the-collapse behavior is untouched.
-    static var sidebarIsolationArguments: [String] {
-        ["AGT_UITEST_FORCE_SIDEBAR_VISIBLE"]
+    /// Launch, then explicitly bring the app to the foreground and assert it got there. Required on
+    /// macOS 14+: `XCUIApplication.launch()` may leave the app `runningBackground` (Apple's headers
+    /// say "whichever is appropriate"), and the app cannot self-activate over the test runner because
+    /// `NSApp.activate()` is cooperative. `XCUIApplication.activate()` is the test-runner-level
+    /// foregrounding (the programmatic equivalent of a Dock click) — without it the window never
+    /// becomes key and every interaction (click/drag/adjust) silently no-ops.
+    func launchForeground(file: StaticString = #filePath, line: UInt = #line) {
+        launch()
+        activate()
+        XCTAssertTrue(wait(for: .runningForeground, timeout: 10),
+                      "app should be foreground after launch", file: file, line: line)
+    }
+
+    /// The single entry point every UI test setUp should use. Sets the force-sidebar sentinel via
+    /// ENVIRONMENT (not launch arguments — those trip the macOS 15+ no-window-at-launch bug,
+    /// FB11763863), then launches and brings the app to the foreground. Caller sets `AGT_STATE_DIR`
+    /// (and any test-specific env) before calling.
+    func launchForUITest(file: StaticString = #filePath, line: UInt = #line) {
+        launchEnvironment["AGT_UITEST_FORCE_SIDEBAR_VISIBLE"] = "1"
+        launchForeground(file: file, line: line)
+    }
+}
+
+extension XCUIElement {
+    /// Polls until the element both exists and is hittable, or the timeout elapses. `waitForExistence`
+    /// only checks presence in the accessibility tree (true even when the window is backgrounded), so
+    /// interaction-based tests must wait for `isHittable` to know the element can actually be driven.
+    func waitForHittable(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if exists, isHittable { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return exists && isHittable
     }
 }
 

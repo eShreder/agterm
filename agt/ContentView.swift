@@ -41,8 +41,11 @@ struct ContentView: View {
     /// `AGT_STATE_DIR`; this gate lets the tests pin it visible without changing production.
     static var forceSidebarVisibleForUITests: Bool {
         let process = ProcessInfo.processInfo
+        // the sentinel rides launch ENVIRONMENT, not launch arguments: a process-launched SwiftUI
+        // WindowGroup app fails to present its window under some launch-arg patterns on macOS 15+
+        // (FB11763863). Env sidesteps that.
         return process.environment["AGT_STATE_DIR"] != nil
-            && process.arguments.contains("AGT_UITEST_FORCE_SIDEBAR_VISIBLE")
+            && process.environment["AGT_UITEST_FORCE_SIDEBAR_VISIBLE"] != nil
     }
 
     var body: some View {

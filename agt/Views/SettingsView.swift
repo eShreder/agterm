@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Settings window (Cmd+,): three tabs — General (notifications), Appearance (font/theme +
@@ -15,6 +16,25 @@ struct SettingsView: View {
                 .tabItem { Label("Key Mapping", systemImage: "keyboard") }
         }
         .frame(width: 480, height: 420)
+        // keep macOS from saving/restoring the Settings window across launches. Otherwise a
+        // process-launch reopen (see agtApp's FB11763863 workaround) resurrects a stale Settings
+        // window on whatever tab it was last on, which steals key focus from the real launch window.
+        .background(NonRestorableWindow())
+    }
+}
+
+/// Marks its hosting `NSWindow` non-restorable so macOS doesn't persist/reopen it.
+private struct NonRestorableWindow: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSView { Probe() }
+    func updateNSView(_: NSView, context _: Context) {}
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.isRestorable = false
+            window.disableSnapshotRestoration()
+        }
     }
 }
 

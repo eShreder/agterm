@@ -317,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleUITestWindowActivationRetries() {
-        let delays: [TimeInterval] = [0, 0.05, 0.15, 0.35, 0.7, 0.95]
+        let delays: [TimeInterval] = [0, 0.1, 0.3, 0.6, 1.0, 1.5, 2.0]
         for delay in delays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.bringUITestWindowsForward()
@@ -325,7 +325,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// On macOS 15+ a SwiftUI WindowGroup app launched by another process (XCUITest, launchd) often
+    /// never auto-presents its window (FB11763863): the dock icon shows but no window appears and the
+    /// scene's `.task`/`.onAppear` never fire. A reopen event — what a dock click sends — creates it.
+    /// Fire that reopen once when no real window exists, then bring whatever windows appear forward.
     private func bringUITestWindowsForward() {
+        if !didForceReopen, NSApp.windows.allSatisfy({ $0 is NSPanel }) {
+            didForceReopen = true
+            NSWorkspace.shared.open(Bundle.main.bundleURL)
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.unhide(nil)
         NSApp.activate()
@@ -336,6 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UITestWindowFixups.expandSidebar(in: window)
         }
     }
+
+    private var didForceReopen = false
 
     /// SwiftUI/AppKit can restore stale plain-WindowGroup windows before the app's own
     /// `WindowLibrary` reopen pass has finished. Closing them from inside the stray view races that

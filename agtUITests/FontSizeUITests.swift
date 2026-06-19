@@ -15,8 +15,7 @@ final class FontSizeUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
+        app.launchForUITest()
     }
 
     override func tearDown() async throws {
@@ -46,8 +45,7 @@ final class FontSizeUITests: XCTestCase {
         app.terminate()
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
+        app.launchForUITest()
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 20), "session should restore")
 
         let restored = try XCTUnwrap(pollFontSize(where: { abs($0 - increased) < 0.5 }, timeout: 8),

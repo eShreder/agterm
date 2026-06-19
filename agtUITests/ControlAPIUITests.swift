@@ -28,8 +28,7 @@ final class ControlAPIUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGT_CONTROL_SOCKET"] = socketPath
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
+        app.launchForUITest()
         // the seeded session row proves the window (and thus the control server's scene .task) is up.
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 30), "seeded session should exist")
     }
@@ -681,8 +680,7 @@ final class ControlAPIUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGT_CONTROL_SOCKET"] = socketPath
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
+        app.launchForUITest()
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 30), "restored session should exist")
     }
 

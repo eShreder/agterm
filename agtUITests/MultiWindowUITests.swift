@@ -211,8 +211,7 @@ final class MultiWindowUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGT_CONTROL_SOCKET"] = socketPath
-        app.launchArguments += XCUIApplication.sidebarIsolationArguments
-        app.launch()
+        app.launchForUITest()
     }
 
     /// Simulate a quit/relaunch cycle: terminate the running app (its `applicationWillTerminate` flushes
