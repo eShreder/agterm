@@ -16,6 +16,7 @@ final class StatusBarMenuUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
     }
 
@@ -44,6 +45,7 @@ final class StatusBarMenuUITests: XCTestCase {
         app.terminate()
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
 
         // restored hidden -> the menu offers the inverse action.

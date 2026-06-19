@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// The Settings window (Cmd+,): three tabs — General and Key Mapping are placeholders for later
-/// phases; Appearance holds the font family, default font size, and ghostty theme.
+/// The Settings window (Cmd+,): three tabs — General (notifications), Appearance (font/theme +
+/// window translucency), and Key Mapping (a placeholder for a later phase).
 struct SettingsView: View {
     let model: SettingsModel
 
     var body: some View {
         TabView {
-            PlaceholderSettings(message: "General settings coming soon.")
+            GeneralSettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
             AppearanceSettingsView(model: model)
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
@@ -15,6 +15,33 @@ struct SettingsView: View {
                 .tabItem { Label("Key Mapping", systemImage: "keyboard") }
         }
         .frame(width: 480, height: 420)
+    }
+}
+
+/// General tab: the macOS notification-banner toggle (default on). The sidebar unseen-count badge
+/// is independent of this — it tracks notifications whether or not banners are shown.
+private struct GeneralSettingsView: View {
+    let model: SettingsModel
+
+    var body: some View {
+        Form {
+            Section("Notifications") {
+                Toggle("Show notification banners", isOn: notificationsEnabled)
+                    .accessibilityIdentifier("settings-notifications")
+                Text("Terminal desktop notifications (OSC 9 / 777) appear in macOS Notification Center. The sidebar badge tracks them either way.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    /// 1:1 with the toggle; nil (the default) reads as on, so settings.json stays minimal until the
+    /// user turns banners off.
+    private var notificationsEnabled: Binding<Bool> {
+        Binding(get: { model.settings.notificationsEnabled ?? true },
+                set: { model.setNotificationsEnabled($0 ? nil : false) })
     }
 }
 

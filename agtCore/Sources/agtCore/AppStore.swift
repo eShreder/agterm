@@ -82,8 +82,15 @@ public final class AppStore {
     public func selectSession(_ sessionID: UUID?) {
         if let sessionID, session(withID: sessionID) == nil { return }
         selectedSessionID = sessionID
+        if let sessionID { clearUnseen(sessionID) }
         recordRecency()
         save()
+    }
+
+    /// Clears a session's unseen-notification badge — it's been looked at. No-op for an unknown id.
+    /// Not persisted (the count is ephemeral), so it never triggers a `save()`.
+    public func clearUnseen(_ sessionID: UUID) {
+        session(withID: sessionID)?.unseenCount = 0
     }
 
     /// Pushes the current selection to the front of the recency stack (the Ctrl-Tab order).

@@ -138,6 +138,7 @@ final class GitStatusUITests: XCTestCase {
         seedWorkspaces(sessionCwd: repo.path)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
     }
 

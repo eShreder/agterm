@@ -16,6 +16,7 @@ final class PaletteUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
         XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session should exist")
     }

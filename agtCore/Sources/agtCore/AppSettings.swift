@@ -21,14 +21,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Background blur radius (private CGS window blur, 0...100), or nil for no blur. Only has a
     /// visible effect when `backgroundOpacity` < 1. Applied in the app target, NOT a ghostty key.
     public var backgroundBlur: Int?
+    /// Whether to post macOS notification banners for terminal desktop notifications. nil means the
+    /// default (on). Only gates the OS banner — the sidebar unseen-count badge tracks notifications
+    /// either way.
+    public var notificationsEnabled: Bool?
 
     public init(fontFamily: String? = nil, fontSize: Double? = nil, theme: String? = nil,
-                backgroundOpacity: Double? = nil, backgroundBlur: Int? = nil) {
+                backgroundOpacity: Double? = nil, backgroundBlur: Int? = nil, notificationsEnabled: Bool? = nil) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.theme = theme
         self.backgroundOpacity = backgroundOpacity
         self.backgroundBlur = backgroundBlur
+        self.notificationsEnabled = notificationsEnabled
     }
 
     /// The ghostty config lines for the set fields, one `key = value` per line, suitable for a

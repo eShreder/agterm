@@ -29,6 +29,16 @@ final class GhosttyCallbacks: @unchecked Sendable {
             guard let view = surfaceView(from: target) else { return true }
             DispatchQueue.main.async { view.reportFontSize() }
             return true
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            // a program emitted an OSC 9 / 777 desktop notification. recover the firing surface and
+            // copy the title/body out of the C strings synchronously (only valid for this call),
+            // then hop to the manager (which resolves the session/pane and applies suppression).
+            guard let view = surfaceView(from: target) else { return true }
+            let note = action.action.desktop_notification
+            let title = note.title.flatMap { String(cString: $0) } ?? ""
+            let body = note.body.flatMap { String(cString: $0) } ?? ""
+            DispatchQueue.main.async { NotificationManager.shared.notify(surface: view, title: title, body: body) }
+            return true
         case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
             // the child process exited. ghostty prints its "Process exited. Press any key to close"
             // fallback unless the host consumes this action. an overlay that should vanish closes

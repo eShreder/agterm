@@ -13,6 +13,7 @@ final class SettingsUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
         XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session should exist")
     }
@@ -55,6 +56,18 @@ final class SettingsUITests: XCTestCase {
                       "moving the opacity slider should persist a sub-1 backgroundOpacity to settings.json")
     }
 
+    func testNotificationsTogglePersists() throws {
+        app.typeKey(",", modifierFlags: .command)
+        app.buttons["General"].firstMatch.click()
+        // type-agnostic match (a grouped-Form Toggle surfaces as a switch/checkbox depending on macOS)
+        let toggle = app.descendants(matching: .any).matching(identifier: "settings-notifications").firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "General should have a notifications toggle")
+        toggle.click() // turn it off (default on)
+
+        XCTAssertTrue(poll { self.settingsBool("notificationsEnabled") == false },
+                      "turning notifications off should persist notificationsEnabled=false")
+    }
+
     // MARK: - Helpers
 
     private func poll(_ condition: () -> Bool, timeout: TimeInterval = 5) -> Bool {
@@ -68,6 +81,10 @@ final class SettingsUITests: XCTestCase {
 
     private func settingsValue(_ key: String) -> String? {
         settingsObject()?[key] as? String
+    }
+
+    private func settingsBool(_ key: String) -> Bool? {
+        (settingsObject()?[key] as? NSNumber)?.boolValue
     }
 
     private func settingsDouble(_ key: String) -> Double? {

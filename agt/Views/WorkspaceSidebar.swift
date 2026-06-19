@@ -13,6 +13,57 @@ private let sessionPasteboardType = NSPasteboard.PasteboardType("com.umputun.agt
 /// `gitStatus?.compact` and stays whole while the name truncates first.
 private final class SidebarCellView: NSTableCellView {
     let tokenField = NSTextField(labelWithString: "")
+    /// Trailing unseen-notification count for the row (a session's `unseenCount`, or a collapsed
+    /// workspace's roll-up), drawn as a small accent capsule right of the git token. Hidden when 0.
+    let badge = BadgeView()
+}
+
+/// A small filled accent capsule showing an unseen-notification count, custom-drawn (not an
+/// `NSTextField`) so the capsule and text center cleanly at row size. A single digit reads as a
+/// circle (min width = height). Exposed to accessibility as a `notify-badge` static text.
+private final class BadgeView: NSView {
+    /// The count to show, capped at `99+`. Drives `intrinsicContentSize` and redraw.
+    var count = 0 {
+        didSet {
+            guard count != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+            setAccessibilityValue(label)
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityIdentifier("notify-badge")
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private static let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold)
+    private var textAttributes: [NSAttributedString.Key: Any] { [.font: Self.font, .foregroundColor: NSColor.white] }
+    private var label: String { count > 99 ? "99+" : String(count) }
+
+    override var intrinsicContentSize: NSSize {
+        let height: CGFloat = 16
+        let width = (label as NSString).size(withAttributes: textAttributes).width
+        return NSSize(width: max(width + 9, height), height: height)
+    }
+
+    override func draw(_: NSRect) {
+        let radius = bounds.height / 2
+        // systemRed (the conventional unread/notification color) reads on both the dark rows and the
+        // accent-colored selected row — an accent capsule would blend into a selected row.
+        NSColor.systemRed.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        let text = label as NSString
+        let size = text.size(withAttributes: textAttributes)
+        let origin = NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
+        text.draw(at: origin, withAttributes: textAttributes)
+    }
 }
 
 /// Row view that always reports itself emphasized. The sidebar never becomes first
@@ -111,7 +162,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // or any session's gitStatus changes. folding gitStatus into the read is what
         // makes a status-only change re-invoke updateNSView; a touch inside viewFor
         // would not register the dependency.
-        _ = store.workspaces.map { ($0.id, $0.name, $0.sessions.map { ($0.id, $0.gitStatus) }) }
+        _ = store.workspaces.map { ($0.id, $0.name, $0.sessions.map { ($0.id, $0.gitStatus, $0.unseenCount) }) }
         _ = store.selectedSessionID
         context.coordinator.reconcile()
         context.coordinator.syncSelection()
@@ -150,6 +201,10 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// Only non-nil statuses are stored; an absent key reads as nil via the
         /// subscript, so a never-seen session and one last seen as nil compare equal.
         private var lastSeenGitStatus: [UUID: GitStatus] = [:]
+
+        /// Last-seen unseen-notification count per session and workspace id, so a reconcile reloads
+        /// only the rows whose badge changed. An absent key reads as nil ≠ any real count.
+        private var lastSeenUnseen: [UUID: Int] = [:]
 
         init(store: AppStore, actions: AppActions) {
             self.store = store
@@ -209,9 +264,11 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 lastTreeSignature = signature
                 rebuildAndReload()
                 snapshotGitStatus()
+                snapshotBadges()
                 return
             }
             reloadChangedGitStatusRows()
+            reloadChangedBadgeRows()
         }
 
         /// Reloads only the session rows whose `gitStatus` changed since the last
@@ -237,6 +294,32 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 for session in workspace.sessions { snapshot[session.id] = session.gitStatus }
             }
             lastSeenGitStatus = snapshot
+        }
+
+        /// Reloads only the rows whose unseen-notification count changed — both the session row and
+        /// its workspace row (the roll-up). Skipped mid-rename, like the git-status reload.
+        private func reloadChangedBadgeRows() {
+            guard let outline = outlineView, !committing, !editing else { return }
+            func reloadIfChanged(_ id: UUID, _ count: Int) {
+                guard count != lastSeenUnseen[id] else { return }
+                lastSeenUnseen[id] = count
+                if let node = nodeCache[id] { outline.reloadItem(node) }
+            }
+            for workspace in store.workspaces {
+                reloadIfChanged(workspace.id, workspace.unseenCount)
+                for session in workspace.sessions { reloadIfChanged(session.id, session.unseenCount) }
+            }
+        }
+
+        /// Records the current unseen count of every session and workspace (keyed by their distinct
+        /// ids) so the next reconcile can detect a badge-only delta.
+        private func snapshotBadges() {
+            var snapshot: [UUID: Int] = [:]
+            for workspace in store.workspaces {
+                snapshot[workspace.id] = workspace.unseenCount
+                for session in workspace.sessions { snapshot[session.id] = session.unseenCount }
+            }
+            lastSeenUnseen = snapshot
         }
 
         /// Rebuilds `roots` from the store, reusing cached node instances by id so
@@ -377,16 +460,19 @@ struct WorkspaceSidebar: NSViewRepresentable {
             field.isEditable = false
             field.isBordered = false
             field.drawsBackground = false
-            // a recycled cell may carry the prior session's tokens; reset before use
+            // a recycled cell may carry the prior row's tokens/badge; reset before use
             applyToken(toCell: cell, status: nil)
+            applyBadge(toCell: cell, count: 0)
             switch node.kind {
             case .workspace:
-                let name = store.workspaces.first(where: { $0.id == node.id })?.name ?? ""
-                field.stringValue = name
+                let workspace = store.workspaces.first(where: { $0.id == node.id })
+                field.stringValue = workspace?.name ?? ""
                 field.font = .preferredFont(forTextStyle: .headline)
                 field.setAccessibilityIdentifier("workspace-row")
                 // expose the workspace name so app.staticTexts["workspace 1"] resolves
-                field.setAccessibilityLabel(name)
+                field.setAccessibilityLabel(workspace?.name ?? "")
+                // roll-up badge so an unseen notification stays visible when the workspace is collapsed
+                applyBadge(toCell: cell, count: workspace?.unseenCount ?? 0)
                 cell.imageView?.image = workspaceIcon
                 cell.imageView?.setAccessibilityIdentifier("workspace-icon")
             case .session:
@@ -395,6 +481,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 field.setAccessibilityIdentifier("session-row")
                 field.setAccessibilityLabel(nil)
                 applyToken(toCell: cell, status: gitStatus(forSession: node.id))
+                applyBadge(toCell: cell, count: store.session(withID: node.id)?.unseenCount ?? 0)
                 cell.imageView?.image = sessionIcon
                 cell.imageView?.setAccessibilityIdentifier("session-icon")
             }
@@ -425,6 +512,13 @@ struct WorkspaceSidebar: NSViewRepresentable {
             token.setAccessibilityIdentifier("git-compact")
             token.setAccessibilityValue(compact)
             cell.setAccessibilityValue(compact)
+        }
+
+        /// Shows the unseen-notification `count` capsule on the row (hidden, zero-width when 0, so the
+        /// name reclaims the space). The `notify-badge` accessibility hook lives on `BadgeView`.
+        private func applyBadge(toCell cell: SidebarCellView, count: Int) {
+            cell.badge.isHidden = count == 0
+            cell.badge.count = count
         }
 
         /// Leading row icons: a filled folder for a workspace, an outlined terminal for a session,
@@ -484,6 +578,12 @@ struct WorkspaceSidebar: NSViewRepresentable {
             token.setContentCompressionResistancePriority(.required, for: .horizontal)
             cell.addSubview(token)
 
+            let badge = cell.badge
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            badge.setContentHuggingPriority(.required, for: .horizontal)
+            badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+            cell.addSubview(badge)
+
             NSLayoutConstraint.activate([
                 icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
                 icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
@@ -491,9 +591,13 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 icon.heightAnchor.constraint(equalToConstant: 16),
                 field.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                // chain: name (flex) | git token | badge (trailing). both trailing items hug their
+                // content, so the name truncates first and they stay whole.
                 token.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
-                token.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+                token.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
                 token.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+                badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
             return cell
         }

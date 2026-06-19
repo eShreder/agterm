@@ -206,6 +206,18 @@ final class AppActions {
         }
     }
 
+    /// Bring a session/pane to the foreground from a notification click: select the session (which
+    /// clears its unseen badge and derives its workspace) and focus the firing pane. Stale-safe: an
+    /// unknown session is a no-op (the caller has already activated the app), and a `.split` pane
+    /// that is no longer split falls back to the primary.
+    func reveal(sessionID: UUID, pane: PaneRole) {
+        guard let session = store.session(withID: sessionID) else { return }
+        store.selectSession(session.id)
+        let wantSplit = pane == .split && session.isSplit
+        session.splitFocused = wantSplit
+        focusSplitPane(session, wantSplit: wantSplit)
+    }
+
     /// The focused terminal: the key window's first responder if it's a surface (covers the main
     /// pane, the split pane, and the quick terminal), else the active session's primary surface.
     private func focusedSurface() -> GhosttySurfaceView? {

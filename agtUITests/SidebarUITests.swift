@@ -22,6 +22,7 @@ final class SidebarUITests: XCTestCase {
             .appendingPathComponent("agt-uitest-\(UUID().uuidString)", isDirectory: true)
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
     }
 

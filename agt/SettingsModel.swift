@@ -18,9 +18,10 @@ final class SettingsModel {
         self.store = store
         self.settingsStore = settingsStore
         self.settings = settingsStore.load()
-        // mirror the persisted window translucency into the shared channel the window chrome reads
+        // mirror the persisted window translucency + notification toggle into their shared channels
         // at launch, before any settings change fires.
         applyWindowTranslucency()
+        applyNotificationsEnabled()
     }
 
     func setFontFamily(_ value: String?) { settings.fontFamily = value; persistAndApply() }
@@ -28,6 +29,7 @@ final class SettingsModel {
     func setTheme(_ value: String?) { settings.theme = value; persistAndApply() }
     func setBackgroundOpacity(_ value: Double?) { settings.backgroundOpacity = value; persistAndApply() }
     func setBackgroundBlur(_ value: Int?) { settings.backgroundBlur = value; persistAndApply() }
+    func setNotificationsEnabled(_ value: Bool?) { settings.notificationsEnabled = value; persistAndApply() }
 
     private func persistAndApply() {
         try? settingsStore.save(settings)
@@ -40,6 +42,7 @@ final class SettingsModel {
             store.resetSessionFontSizes()
         }
         applyWindowTranslucency()
+        applyNotificationsEnabled()
         // refresh the app chrome (status bar + title bar + sidebar) with the new terminal color and
         // window translucency immediately, rather than only when the window next re-keys.
         NotificationCenter.default.post(name: .agtAppearanceChanged, object: nil)
@@ -48,6 +51,10 @@ final class SettingsModel {
     private func applyWindowTranslucency() {
         GhosttyApp.shared.setWindowTranslucency(opacity: settings.backgroundOpacity ?? 1,
                                                 blurRadius: settings.backgroundBlur ?? 0)
+    }
+
+    private func applyNotificationsEnabled() {
+        NotificationManager.shared.bannersEnabled = settings.notificationsEnabled ?? true
     }
 
     /// Write the ghostty config lines (font/size/theme + the translucency pins) to the file

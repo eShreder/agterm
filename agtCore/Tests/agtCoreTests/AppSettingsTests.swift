@@ -61,4 +61,11 @@ struct AppSettingsTests {
         #expect(AppSettings().ghosttyConfigLines().isEmpty)
         #expect(AppSettings(backgroundBlur: 40).ghosttyConfigLines().isEmpty)
     }
+
+    @Test func notificationsEnabledRoundTripsAndIsNotAConfigLine() throws {
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(AppSettings(notificationsEnabled: false)))
+        #expect(decoded.notificationsEnabled == false)
+        // it's an app-level toggle, never a ghostty config key
+        #expect(AppSettings(notificationsEnabled: false).ghosttyConfigLines().isEmpty)
+    }
 }

@@ -26,6 +26,11 @@ public final class Session: Identifiable {
     /// `GitStatusService`. Observed, so the sidebar tokens and the title pill react.
     public var gitStatus: GitStatus?
 
+    /// Count of unseen terminal notifications fired by this session's panes while it wasn't focused.
+    /// Observed, so the sidebar badge reacts. Ephemeral: `SessionSnapshot` doesn't capture it, so it
+    /// never survives a relaunch.
+    public var unseenCount: Int = 0
+
     /// The app-side surface (a `GhosttySurfaceView`). Lazily created on first
     /// display and owned here so it survives sidebar/detail view churn.
     @ObservationIgnored public var surface: (any TerminalSurface)?

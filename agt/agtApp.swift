@@ -55,6 +55,10 @@ struct agtApp: App {
                     }
                     // install the Ctrl-Tab session-switcher key monitors (idempotent).
                     sessionSwitcher.start()
+                    // register the notification delegate + request authorization (idempotent), and
+                    // hand it the action hub so a banner click can navigate to the firing pane.
+                    NotificationManager.shared.actions = actions
+                    NotificationManager.shared.start()
                     // start the active-session refresh loop + focus observers once
                     // the scene appears (idempotent if the task re-runs).
                     gitStatusService.start()
@@ -93,33 +97,34 @@ struct agtApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
             }
-            // View: split + quick terminal, near the sidebar toggle.
-            CommandGroup(after: .sidebar) {
-                Button(store.activeSession?.isSplit == true ? "Hide Split" : "Split Right") {
-                    actions.toggleSplit()
+            // View: font zoom (drives ghostty on the focused terminal), the status-bar toggle, and
+            // split / quick terminal / palettes. The menu reserves an icon column because the system
+            // "Enter Full Screen" item has an icon, so every custom item carries an SF Symbol too —
+            // otherwise they render as blank, indented slots.
+            CommandGroup(after: .toolbar) {
+                Button { actions.increaseFontSize() } label: { Label("Increase Font Size", systemImage: "textformat.size.larger") }
+                    .keyboardShortcut("+", modifiers: .command)
+                Button { actions.decreaseFontSize() } label: { Label("Decrease Font Size", systemImage: "textformat.size.smaller") }
+                    .keyboardShortcut("-", modifiers: .command)
+                Button { actions.resetFontSize() } label: { Label("Actual Size", systemImage: "textformat.size") }
+                    .keyboardShortcut("0", modifiers: .command)
+                Divider()
+                Button { store.setStatusBarHidden(!store.statusBarHidden) } label: {
+                    Label(store.statusBarHidden ? "Show Status Bar" : "Hide Status Bar", systemImage: "rectangle.bottomthird.inset.filled")
+                }
+                .keyboardShortcut("/", modifiers: .command)
+                Divider()
+                Button { actions.toggleSplit() } label: {
+                    Label(store.activeSession?.isSplit == true ? "Hide Split" : "Split Right", systemImage: "rectangle.split.2x1")
                 }
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(store.activeSession == nil)
-                Button("Quick Terminal") { QuickTerminalController.shared.toggle() }
+                Button { QuickTerminalController.shared.toggle() } label: { Label("Quick Terminal", systemImage: "terminal") }
                     .keyboardShortcut("`", modifiers: .control)
-                Button("Go to Session") { palette.toggle(.sessions) }
+                Button { palette.toggle(.sessions) } label: { Label("Go to Session", systemImage: "rectangle.stack") }
                     .keyboardShortcut("p", modifiers: .control)
-                Button("Command Palette") { palette.toggle(.actions) }
+                Button { palette.toggle(.actions) } label: { Label("Command Palette", systemImage: "command") }
                     .keyboardShortcut("p", modifiers: [.control, .shift])
-            }
-            // View: font zoom (drives ghostty on the focused terminal) + the status-bar toggle.
-            CommandGroup(after: .toolbar) {
-                Button("Increase Font Size") { actions.increaseFontSize() }
-                    .keyboardShortcut("+", modifiers: .command)
-                Button("Decrease Font Size") { actions.decreaseFontSize() }
-                    .keyboardShortcut("-", modifiers: .command)
-                Button("Actual Size") { actions.resetFontSize() }
-                    .keyboardShortcut("0", modifiers: .command)
-                Divider()
-                Button(store.statusBarHidden ? "Show Status Bar" : "Hide Status Bar") {
-                    store.setStatusBarHidden(!store.statusBarHidden)
-                }
-                .keyboardShortcut("/", modifiers: .command)
             }
         }
 
@@ -158,7 +163,13 @@ struct agtApp: App {
         let sessionID = session.id
         view.onExit = { store.closeSession(sessionID) }
         view.onCwdChange = { service.requestRefresh(sessionID: sessionID) }
-        view.onFocusChange = { focused in if focused { store.session(withID: sessionID)?.splitFocused = false } }
+        view.onFocusChange = { focused in
+            guard focused else { return }
+            store.session(withID: sessionID)?.splitFocused = false
+            // focusing a pane means you've seen the session: clear the badge and any delivered banners.
+            store.clearUnseen(sessionID)
+            NotificationManager.shared.clearDelivered(sessionID: sessionID)
+        }
         view.onFontSizeChange = { store.setFontSize(sessionID, $0) }
         return view
     }
@@ -174,7 +185,12 @@ struct agtApp: App {
         let view = GhosttySurfaceView(workingDirectory: session.effectiveCwd, fontSize: session.fontSize.map(Float.init))
         let sessionID = session.id
         view.onExit = { store.closeSplit(sessionID) }
-        view.onFocusChange = { focused in if focused { store.session(withID: sessionID)?.splitFocused = true } }
+        view.onFocusChange = { focused in
+            guard focused else { return }
+            store.session(withID: sessionID)?.splitFocused = true
+            store.clearUnseen(sessionID)
+            NotificationManager.shared.clearDelivered(sessionID: sessionID)
+        }
         return view
     }
 
@@ -217,9 +233,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        if ContentView.forceSidebarVisibleForUITests {
+            scheduleUITestWindowActivationRetries()
+        } else {
+            NSApp.activate()
+        }
         // Boot libghostty: init, config, app_new, 120fps tick.
         _ = GhosttyApp.shared
+    }
+
+    private func scheduleUITestWindowActivationRetries() {
+        let delays: [TimeInterval] = [0, 0.05, 0.15, 0.35, 0.7, 0.95]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.bringUITestWindowsForward()
+            }
+        }
+    }
+
+    private func bringUITestWindowsForward() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
+        NSApp.activate()
+        for window in NSApp.windows where window.canBecomeKey {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFrontRegardless()
+            window.makeKeyAndOrderFront(nil)
+            UITestWindowFixups.expandSidebar(in: window)
+        }
     }
 
     func applicationWillTerminate(_: Notification) {

@@ -28,6 +28,7 @@ final class ControlAPIUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGT_CONTROL_SOCKET"] = socketPath
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
         // the seeded session row proves the window (and thus the control server's scene .task) is up.
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 30), "seeded session should exist")
@@ -133,6 +134,33 @@ final class ControlAPIUITests: XCTestCase {
         let response = try sendCommand(typeRequest(text: command, target: newID, select: false))
         XCTAssertEqual(response["ok"] as? Bool, true, "session.type into the visible session should succeed: \(response)")
         XCTAssertNotNil(pollMarker(file, timeout: 12), "the typed command should run in the visible session's shell")
+    }
+
+    // an OSC 9 desktop notification from an UNFOCUSED pane badges its sidebar row, and selecting the
+    // session clears it. Fire into the seeded session (realized at launch) after a new session takes
+    // focus, so suppression doesn't drop it and no --select (which would re-focus it) is needed.
+    func testUnfocusedNotificationBadgesRowAndClearsOnSelect() throws {
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        let treeResult = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")
+        let root = try XCTUnwrap(treeResult["tree"] as? [String: Any], "result should carry a tree")
+        let workspaces = try XCTUnwrap(root["workspaces"] as? [[String: Any]], "tree should list workspaces")
+        let sessions = try XCTUnwrap(workspaces.first?["sessions"] as? [[String: Any]], "workspace should list sessions")
+        let seeded = try XCTUnwrap(sessions.first?["id"] as? String, "should have a seeded session id")
+
+        // a second session takes focus, leaving the seeded one realized but unfocused.
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.new"}"#)["ok"] as? Bool, true)
+        XCTAssertTrue(pollSessionCount(2, timeout: 10), "the new session should land")
+
+        // emit OSC 9 from the unfocused seeded session (printf interprets the octal escapes).
+        let typed = try sendCommand(typeRequest(text: "printf '\\033]9;agt test\\007'\n", target: seeded, select: false))
+        XCTAssertEqual(typed["ok"] as? Bool, true, "typing into the realized seeded session should succeed: \(typed)")
+
+        XCTAssertTrue(app.staticTexts["notify-badge"].waitForExistence(timeout: 12),
+                      "an unseen badge should appear on the unfocused session's row")
+
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.select","target":"\#(seeded)"}"#)["ok"] as? Bool, true)
+        XCTAssertTrue(app.staticTexts["notify-badge"].waitForNonExistence(timeout: 12),
+                      "selecting the session should clear its badge")
     }
 
     // session.type --select into a freshly created, never-shown session realizes it and the text lands.
@@ -419,6 +447,7 @@ final class ControlAPIUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGT_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGT_CONTROL_SOCKET"] = socketPath
+        app.launchArguments += XCUIApplication.sidebarIsolationArguments
         app.launch()
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 30), "restored session should exist")
     }

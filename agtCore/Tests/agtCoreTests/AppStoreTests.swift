@@ -86,6 +86,28 @@ struct AppStoreTests {
         #expect(store.selectedSessionID == a.id)
     }
 
+    @Test func selectSessionClearsOnlyItsUnseenBadge() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let a = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        let b = store.addSession(toWorkspace: ws.id, cwd: "/b")!
+        a.unseenCount = 3
+        b.unseenCount = 2
+        store.selectSession(a.id)
+        #expect(a.unseenCount == 0) // selecting a session clears its own badge
+        #expect(b.unseenCount == 2) // other sessions are untouched
+    }
+
+    @Test func clearUnseenResetsCountAndIgnoresUnknownID() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let a = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        a.unseenCount = 5
+        store.clearUnseen(a.id)
+        #expect(a.unseenCount == 0)
+        store.clearUnseen(UUID()) // unknown id is a no-op, no crash
+    }
+
     @Test func workspaceForSessionDerivesOwner() {
         let store = Self.makeStore()
         let work = store.addWorkspace(name: "work")

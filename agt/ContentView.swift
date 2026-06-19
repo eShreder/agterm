@@ -27,31 +27,24 @@ struct ContentView: View {
     /// When < 1 the status bar paints nothing so the single translucent window background shows
     /// through, keeping the whole interior a uniform translucent surface.
     @State private var windowOpacity: Double = GhosttyApp.shared.windowOpacity
+    /// Sidebar column visibility — only consulted on the isolated-UI-test path (see `splitRoot`),
+    /// where it is pinned to `.doubleColumn`. Production never binds it, so its persisted collapse is
+    /// untouched.
+    @State private var columnVisibility: NavigationSplitViewVisibility =
+        ContentView.forceSidebarVisibleForUITests ? .doubleColumn : .automatic
+
+    /// True only when running an isolated UI test that requested a forced-visible sidebar
+    /// (`AGT_STATE_DIR` set AND the `AGT_UITEST_FORCE_SIDEBAR_VISIBLE` launch arg present). The
+    /// sidebar collapse lives in the bundle's global NSSplitView autosave, which leaks past
+    /// `AGT_STATE_DIR`; this gate lets the tests pin it visible without changing production.
+    static var forceSidebarVisibleForUITests: Bool {
+        let process = ProcessInfo.processInfo
+        return process.environment["AGT_STATE_DIR"] != nil
+            && process.arguments.contains("AGT_UITEST_FORCE_SIDEBAR_VISIBLE")
+    }
 
     var body: some View {
-        NavigationSplitView {
-            WorkspaceSidebar(store: store, actions: actions)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-                .safeAreaInset(edge: .bottom) { bottomBar }
-        } detail: {
-            VStack(spacing: 0) {
-                // a subtle hairline between the title bar and the terminal; lives in the
-                // detail pane so it starts at the sidebar's right edge, not the full width.
-                Rectangle()
-                    .fill(Color.white.opacity(0.1))
-                    .frame(height: 1)
-                detailPane
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if !store.statusBarHidden {
-                    // hairline between the terminal and the status bar, matching the one
-                    // under the title bar.
-                    Rectangle()
-                        .fill(Color.white.opacity(0.1))
-                        .frame(height: 1)
-                    statusBar
-                }
-            }
-        }
+        splitRoot
         // native two-line titlebar title (session name bold + working-directory subtitle),
         // driven through SwiftUI so it isn't clobbered by NavigationSplitView.
         .navigationTitle(windowTitle)
@@ -95,6 +88,59 @@ struct ContentView: View {
         // blend the title bar with the terminal; surface the window un-minimized on launch.
         // the title token makes updateNSView re-run the blend on a session switch.
         .background(WindowAccessor(titleToken: windowTitle))
+    }
+
+    /// The split view. Production uses the plain unbound `NavigationSplitView` (so its sidebar
+    /// collapse persists via AppKit's autosave, untouched). An isolated UI test instead binds
+    /// `columnVisibility` and pins it `.doubleColumn`, so the test asks SwiftUI for the two-column
+    /// layout before the AppKit split-view fixup below enforces the real divider state regardless of the
+    /// host's persisted collapse (which leaks past `AGT_STATE_DIR` via the global autosave).
+    @ViewBuilder private var splitRoot: some View {
+        if ContentView.forceSidebarVisibleForUITests {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebarColumn
+            } detail: {
+                detailColumn
+            }
+            // `.doubleColumn` shows the sidebar + detail in a two-column split (`.all` is the
+            // three-column value and doesn't reveal the sidebar here).
+            .onAppear { columnVisibility = .doubleColumn }
+            .onChange(of: columnVisibility) { _, visibility in
+                if visibility != .doubleColumn { columnVisibility = .doubleColumn }
+            }
+        } else {
+            NavigationSplitView {
+                sidebarColumn
+            } detail: {
+                detailColumn
+            }
+        }
+    }
+
+    private var sidebarColumn: some View {
+        WorkspaceSidebar(store: store, actions: actions)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+            .safeAreaInset(edge: .bottom) { bottomBar }
+    }
+
+    @ViewBuilder private var detailColumn: some View {
+        VStack(spacing: 0) {
+            // a subtle hairline between the title bar and the terminal; lives in the
+            // detail pane so it starts at the sidebar's right edge, not the full width.
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1)
+            detailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !store.statusBarHidden {
+                // hairline between the terminal and the status bar, matching the one
+                // under the title bar.
+                Rectangle()
+                    .fill(Color.white.opacity(0.1))
+                    .frame(height: 1)
+                statusBar
+            }
+        }
     }
 
     /// The active session's terminal, or a placeholder when nothing is selected. When the
@@ -365,6 +411,7 @@ private struct WindowAccessor: NSViewRepresentable {
             // re-apply the miniaturized state right after the view attaches.
             bringForward(window)
             DispatchQueue.main.async { [weak self] in self?.bringForward(window) }
+            applyUITestSidebarFixups(window)
         }
 
         deinit {
@@ -373,6 +420,26 @@ private struct WindowAccessor: NSViewRepresentable {
 
         private func bringForward(_ window: NSWindow) {
             if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        private func applyUITestSidebarFixups(_ window: NSWindow) {
+            guard ContentView.forceSidebarVisibleForUITests else { return }
+            let delays: [TimeInterval] = [0, 0.05, 0.15, 0.35, 0.7, 0.95]
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                    guard let self, let window, self.window === window else { return }
+                    self.bringForwardForUITests(window)
+                    UITestWindowFixups.expandSidebar(in: window)
+                }
+            }
+        }
+
+        private func bringForwardForUITests(_ window: NSWindow) {
+            NSApp.unhide(nil)
+            NSApp.activate()
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)
         }
 
