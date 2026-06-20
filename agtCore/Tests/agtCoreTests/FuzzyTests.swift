@@ -37,4 +37,28 @@ struct FuzzyTests {
         #expect(prefix < substring)
         #expect(substring < subsequence)
     }
+
+    @Test func multiTermMatchesAcrossWordBoundaries() {
+        // "cap dev" (two whitespace-separated terms) matches "caprica-dev": "cap" is a prefix and
+        // "dev" a later substring, even though the literal "cap dev" is neither.
+        #expect(fuzzyScore(query: "cap dev", target: "caprica-dev") != nil)
+    }
+
+    @Test func multiTermIsOrderIndependent() {
+        #expect(fuzzyScore(query: "cap dev", target: "caprica-dev")
+            == fuzzyScore(query: "dev cap", target: "caprica-dev"))
+    }
+
+    @Test func multiTermRequiresEveryTerm() {
+        // one term matches, the other doesn't → no match.
+        #expect(fuzzyScore(query: "cap xyz", target: "caprica-dev") == nil)
+    }
+
+    @Test func collapsesRepeatedWhitespaceBetweenTerms() {
+        #expect(fuzzyScore(query: "cap   dev", target: "caprica-dev") != nil)
+    }
+
+    @Test func whitespaceOnlyQueryMatchesEverything() {
+        #expect(fuzzyScore(query: "  \t ", target: "anything") == 0)
+    }
 }
