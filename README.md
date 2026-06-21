@@ -147,4 +147,8 @@ Restore reconstructs the structure, not the running processes. Three limitations
 
 ## Attribution
 
-The libghostty integration files (app initialization, runtime callbacks, surface `NSView`, resource resolution) are adapted from [macterm](https://github.com/thdxg/macterm) (`thdxg/macterm`, MIT), which builds under the same Swift 6 strict-concurrency toolchain `agt` targets. The model, sidebar, and persistence are original to `agt`.
+agt embeds **libghostty**, the terminal engine from [Ghostty](https://github.com/ghostty-org/ghostty) (MIT). It does all the real terminal work: rendering, VT parsing, and shell I/O. agt builds it from upstream source at a pinned commit via `scripts/setup.sh`, with no fork and no prebuilt binary.
+
+The way agt drives libghostty's C API from a SwiftUI/AppKit app, under the Swift 6 strict-concurrency toolchain, was learned from [macterm](https://github.com/thdxg/macterm) (`thdxg/macterm`, MIT). The libghostty bridge files (`GhosttyApp`, `GhosttyCallbacks`, `GhosttyResources`, `GhosttySurfaceView`, `WindowAppearance`) are adapted from it and each carries an attribution comment. The model, sidebar, persistence, control channel, and multi-window code are original to agt.
+
+SwiftUI guidance during development came from the [SwiftUI Agent Skill](https://github.com/AvdLee/SwiftUI-Agent-Skill) by Antoine van der Lee (MIT).
