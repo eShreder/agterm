@@ -64,24 +64,34 @@ private final class BadgeView: NSView {
     required init?(coder _: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private static let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold)
+    // empty space reserved at the badge's LEADING edge, present only when the badge is shown, so the
+    // capsule keeps air from the status glyph to its left — while a count-0 badge collapses fully and
+    // lets that glyph sit flush at the trailing margin.
+    private static let leadingGap: CGFloat = 4
     private var textAttributes: [NSAttributedString.Key: Any] { [.font: Self.font, .foregroundColor: NSColor.white] }
     private var label: String { count > 99 ? "99+" : String(count) }
 
     override var intrinsicContentSize: NSSize {
         let height: CGFloat = 16
-        let width = (label as NSString).size(withAttributes: textAttributes).width
-        return NSSize(width: max(width + 9, height), height: height)
+        // collapse to zero width when there's nothing to show: `isHidden` alone does NOT collapse a
+        // view in Auto Layout, so a count-0 badge would otherwise reserve a trailing slot and push the
+        // status glyph in from the right edge. zero width lets the name reclaim it and the glyph sit flush.
+        guard count > 0 else { return NSSize(width: 0, height: height) }
+        let capsule = max((label as NSString).size(withAttributes: textAttributes).width + 9, height)
+        return NSSize(width: capsule + Self.leadingGap, height: height)
     }
 
     override func draw(_: NSRect) {
-        let radius = bounds.height / 2
+        // the capsule occupies bounds minus the reserved leading gap; the status glyph to its left keeps air
+        let capsule = NSRect(x: Self.leadingGap, y: 0, width: bounds.width - Self.leadingGap, height: bounds.height)
+        let radius = capsule.height / 2
         // systemRed (the conventional unread/notification color) reads on both the dark rows and the
         // accent-colored selected row — an accent capsule would blend into a selected row.
         NSColor.systemRed.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        NSBezierPath(roundedRect: capsule, xRadius: radius, yRadius: radius).fill()
         let text = label as NSString
         let size = text.size(withAttributes: textAttributes)
-        let origin = NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
+        let origin = NSPoint(x: capsule.minX + (capsule.width - size.width) / 2, y: (capsule.height - size.height) / 2)
         text.draw(at: origin, withAttributes: textAttributes)
     }
 }
@@ -759,7 +769,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 // chain: name (flex) | status icon | badge (trailing). the status icon and badge hug
                 // their content, so the name truncates first and both stay whole.
                 field.trailingAnchor.constraint(equalTo: statusIcon.leadingAnchor, constant: -6),
-                statusIcon.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
+                statusIcon.trailingAnchor.constraint(equalTo: badge.leadingAnchor),
                 statusIcon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 // width is owned by StatusIconView (0 when idle, glyph-width otherwise) so an idle row
                 // reclaims the slot; only the height is pinned here.
