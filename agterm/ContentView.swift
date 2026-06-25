@@ -1163,8 +1163,9 @@ final class WindowRegistry {
         guard let window = windows[id] else { return false }
         let maxSize = (window.screen ?? NSScreen.main)?.visibleFrame.size
             ?? CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        let size = WindowGeometry.clampSize(CGSize(width: CGFloat(width), height: CGFloat(height)),
-                                            min: window.minSize, max: maxSize)
+        let size = WindowGeometry.clampSize(WindowGeometry.Size(CGSize(width: CGFloat(width), height: CGFloat(height))),
+                                            min: WindowGeometry.Size(window.minSize),
+                                            max: WindowGeometry.Size(maxSize)).cgSize
         var frame = window.frame
         frame.origin.y += frame.size.height - size.height // keep the top edge fixed
         frame.size = size
@@ -1193,10 +1194,29 @@ final class WindowRegistry {
         let size = window.frame.size
         let topLeft = NSPoint(x: screen.frame.minX + CGFloat(x), y: screen.frame.maxY - CGFloat(y))
         // convert top-left to the frame's bottom-left origin, then clamp so a strip stays on the display.
-        let requestedOrigin = CGPoint(x: topLeft.x, y: topLeft.y - size.height)
-        let origin = WindowGeometry.clampOrigin(requestedOrigin, windowSize: size, displayFrame: screen.frame)
+        let requested = WindowGeometry.Point(x: Double(topLeft.x), y: Double(topLeft.y - size.height))
+        let origin = WindowGeometry.clampOrigin(requested, windowSize: WindowGeometry.Size(size),
+                                                displayFrame: WindowGeometry.Rect(screen.frame)).cgPoint
         window.setFrameOrigin(origin)
         return true
+    }
+}
+
+// CoreGraphics <-> host-free WindowGeometry conversions, kept app-side: agtermCore stays Foundation-only
+// (a CoreGraphics member reference there crashes the release WMO SIL deserializer — see WindowGeometry).
+private extension WindowGeometry.Size {
+    init(_ cg: CGSize) { self.init(width: Double(cg.width), height: Double(cg.height)) }
+    var cgSize: CGSize { CGSize(width: CGFloat(width), height: CGFloat(height)) }
+}
+
+private extension WindowGeometry.Point {
+    var cgPoint: CGPoint { CGPoint(x: CGFloat(x), y: CGFloat(y)) }
+}
+
+private extension WindowGeometry.Rect {
+    init(_ cg: CGRect) {
+        self.init(origin: WindowGeometry.Point(x: Double(cg.origin.x), y: Double(cg.origin.y)),
+                  size: WindowGeometry.Size(cg.size))
     }
 }
 
