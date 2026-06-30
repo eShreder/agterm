@@ -204,8 +204,10 @@ execution and every libghostty call are `@MainActor`. Use the `swift-concurrency
 
 - **ssh drop / `%exit`:** the gateway process exits → `TmuxController` marks the workspace
   "disconnected" and offers manual reattach (tmux is alive server-side). Surfaces are
-  frozen or removed — default TBD-resolved to: **remove on disconnect, reattach recreates
-  them** (simplest; tmux is the source of truth).
+  **frozen, not destroyed**: they stay visible as read-only, dimmed, with a "disconnected"
+  banner, so the user keeps their visual context. Manual reattach starts a fresh gateway
+  and **tears down + rebuilds** the workspace from fresh tmux state (tmux is the source of
+  truth), which avoids reconciling stale surfaces against new windows.
 - **`%error` on one of our commands:** log + notification, no crash.
 - **User detach:** `detach-client` → tmux survives server-side → the local workspace is
   removed; remote sessions persist (the core tmux-mode value).
@@ -226,8 +228,9 @@ round-trip + e2e tests. The agent-skill is the fifth surface.
   workspace is removed.
 - `tmux list` — active tmux connections: host, tmux session, window↔session mapping,
   status (connected/disconnected).
-- *(optional, for completeness)* `tmux kill <connection-id>` — `kill-session` remotely
-  (hard termination vs detach).
+- `tmux kill <connection-id>` — `kill-session` remotely (hard termination vs detach).
+  Included in v1 for control-API completeness (a first-class surface, not parity with the
+  GUI).
 
 **Existing `session.*` become backend-aware (no new commands):** operations on a
 tmux-backed session must round-trip to tmux, not run locally —
@@ -243,7 +246,7 @@ control command (toolbar/menu/control are three callers of one seam and must not
 **agent-skill** (`agterm/Resources/agent-skill/`, single source of truth): update
 SKILL.md + reference.md (new `tmux.*`, backend-aware `session.*`) + examples.md
 (attach/detach scenario) + troubleshooting.md (ssh drop, reattach, no-splits limit) +
-the command count (44 → 46, or 47 if `tmux kill` is included). Edit only the app-repo
+the command count (44 → 47: `tmux attach`/`detach`/`list`/`kill`). Edit only the app-repo
 bundle; never the installed copies.
 
 ## Testing
