@@ -544,4 +544,21 @@ struct ControlProtocolTests {
             try JSONDecoder().decode(ControlRequest.self, from: Data(json.utf8))
         }
     }
+
+    @Test func tmuxCommandsRoundTrip() throws {
+        let requests: [ControlRequest] = [
+            ControlRequest(cmd: .tmuxAttach, args: ControlArgs(name: "work", host: "myhost")),
+            ControlRequest(cmd: .tmuxAttach, args: ControlArgs(name: "work", workspace: "remote", host: "myhost")),
+            ControlRequest(cmd: .tmuxDetach, target: "AABBCC"),
+            ControlRequest(cmd: .tmuxKill, target: "AABBCC"),
+            ControlRequest(cmd: .tmuxList),
+        ]
+        for request in requests { #expect(try roundTrip(request) == request) }
+    }
+
+    @Test func tmuxListResultRoundTrips() throws {
+        let result = ControlResult(tmuxConnections: [ControlTmuxNode(id: "AABBCC", host: "myhost", windows: ["zsh", "logs"])])
+        let data = try JSONEncoder().encode(result)
+        #expect(try JSONDecoder().decode(ControlResult.self, from: data) == result)
+    }
 }

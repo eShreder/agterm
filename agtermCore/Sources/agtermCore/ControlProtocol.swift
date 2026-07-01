@@ -28,6 +28,10 @@ public enum Command: String, Codable, Sendable {
     case sessionOverlayOpen = "session.overlay.open"
     case sessionOverlayClose = "session.overlay.close"
     case sessionOverlayResult = "session.overlay.result"
+    case tmuxAttach = "tmux.attach"
+    case tmuxDetach = "tmux.detach"
+    case tmuxList = "tmux.list"
+    case tmuxKill = "tmux.kill"
     case quick
     case sidebar
     case sidebarMode = "sidebar.mode"
@@ -120,13 +124,16 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// (`NSSound(named:)`, e.g. `Glass`, also resolving custom sounds in `~/Library/Sounds`). nil/empty means
     /// no per-call sound — the app may still play the Settings "Blocked sound" default on a `blocked` status.
     public var sound: String?
+    /// Host for `tmux.attach`.
+    public var host: String?
 
     public init(name: String? = nil, cwd: String? = nil, workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, text: String? = nil, select: Bool? = nil, mode: String? = nil,
                 command: String? = nil, wait: Bool? = nil, sizePercent: Int? = nil, window: String? = nil,
                 pane: String? = nil, to: String? = nil, title: String? = nil, body: String? = nil,
                 width: Int? = nil, height: Int? = nil, x: Int? = nil, y: Int? = nil, display: Int? = nil,
-                status: String? = nil, blink: Bool? = nil, autoReset: Bool? = nil, sound: String? = nil) {
+                status: String? = nil, blink: Bool? = nil, autoReset: Bool? = nil, sound: String? = nil,
+                host: String? = nil) {
         self.name = name
         self.cwd = cwd
         self.workspace = workspace
@@ -152,6 +159,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.blink = blink
         self.autoReset = autoReset
         self.sound = sound
+        self.host = host
     }
 }
 
@@ -252,6 +260,19 @@ public struct ControlWindowNode: Codable, Sendable, Equatable {
     }
 }
 
+/// A tmux control-mode connection as projected into the `tmux.list` response.
+public struct ControlTmuxNode: Codable, Sendable, Equatable {
+    public var id: String
+    public var host: String
+    public var windows: [String]
+
+    public init(id: String, host: String, windows: [String]) {
+        self.id = id
+        self.host = host
+        self.windows = windows
+    }
+}
+
 /// The successful payload: a new/affected id for mutating commands, a tree for `tree`, the selected text
 /// for `session.copy`. All optional.
 public struct ControlResult: Codable, Sendable, Equatable {
@@ -272,10 +293,12 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var theme: String?
     /// The available bundled theme names for `theme.list`.
     public var themes: [String]?
+    /// The connected tmux control-mode sessions for `tmux.list`.
+    public var tmuxConnections: [ControlTmuxNode]?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
-                theme: String? = nil, themes: [String]? = nil) {
+                theme: String? = nil, themes: [String]? = nil, tmuxConnections: [ControlTmuxNode]? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
@@ -284,6 +307,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.count = count
         self.theme = theme
         self.themes = themes
+        self.tmuxConnections = tmuxConnections
     }
 }
 
