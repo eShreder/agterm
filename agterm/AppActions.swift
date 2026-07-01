@@ -165,11 +165,15 @@ final class AppActions {
     }
 
     /// Attach to a remote tmux session over ssh (`ssh -tt <host> tmux -CC new -A -s <name>`), mirroring
-    /// each tmux window into a fresh "tmux: <host>" workspace in the frontmost window's store. No-op
-    /// when no window is open. (Phase 4 exposes this over the control channel; Task 6 wires the entry.)
-    func attachTmux(host: String, sessionName: String, workspaceName: String? = nil) {
-        guard let store else { return }
+    /// each tmux window into a fresh "tmux: <host>" workspace in the frontmost window's store. Returns
+    /// `false` (no-op) when no window is open, so the control channel can surface a "no open window"
+    /// error instead of a silent ok. (Phase 4 exposes this over the control channel; Task 6 wires the
+    /// entry.)
+    @discardableResult
+    func attachTmux(host: String, sessionName: String, workspaceName: String? = nil) -> Bool {
+        guard let store else { return false }
         tmuxController(for: store).attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
+        return true
     }
 
     /// Prompt for an ssh host and tmux session name via a standard `NSAlert` with a two-field accessory
