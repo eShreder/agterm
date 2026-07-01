@@ -129,6 +129,9 @@ struct SocketClient {
         if let themes = response.result?.themes {
             return formatThemes(themes, current: response.result?.theme)
         }
+        if let connections = response.result?.tmuxConnections, !connections.isEmpty {
+            return formatTmuxConnections(connections)
+        }
         if let text = response.result?.text {
             return text
         }
@@ -158,6 +161,14 @@ struct SocketClient {
         windows.map { window in
             let tags = (window.open ? " [open]" : "") + (window.active ? " [active]" : "")
             return "\(window.id)  \(window.name)\(tags)"
+        }.joined(separator: "\n")
+    }
+
+    /// Render `tmux.list` as one `id  host  [win1, win2]` line per active connection (no trailing
+    /// newline). An empty list falls through to the bare `ok` in `formatResponse`.
+    static func formatTmuxConnections(_ connections: [ControlTmuxNode]) -> String {
+        connections.map { connection in
+            "\(connection.id)  \(connection.host)  [\(connection.windows.joined(separator: ", "))]"
         }.joined(separator: "\n")
     }
 

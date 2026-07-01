@@ -154,6 +154,17 @@ struct SocketClientTests {
         #expect(SocketClient.formatResponse(response, json: false) == "selected\nlines")
     }
 
+    @Test func formatResponseTmuxConnections() {
+        let node = ControlTmuxNode(id: "AABBCC", host: "myhost", windows: ["zsh", "logs"])
+        let response = ControlResponse(ok: true, result: ControlResult(tmuxConnections: [node]))
+        #expect(SocketClient.formatResponse(response, json: false) == "AABBCC  myhost  [zsh, logs]")
+    }
+
+    @Test func formatResponseEmptyTmuxConnectionsIsOk() {
+        let response = ControlResponse(ok: true, result: ControlResult(tmuxConnections: []))
+        #expect(SocketClient.formatResponse(response, json: false) == "ok")
+    }
+
     @Test func formatResponseZeroCountIsOk() {
         // keymap.reload reports a parse-diagnostic count; 0 reads as a clean reload.
         let response = ControlResponse(ok: true, result: ControlResult(count: 0))
