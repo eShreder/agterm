@@ -28,8 +28,25 @@ public struct TmuxSessionModel: Sendable {
             paneToWindow = paneToWindow.filter { $0.value != w }
             windowLeadingPane[w] = nil
             return [.removeSession(window: w)]
+        case .layoutChange(let w, let layout):
+            guard windows.contains(w) else { return [] }
+            let parsed = TmuxLayout.panes(in: layout)
+            guard let leading = parsed.panes.first else { return [] }
+            // Re-map: drop this window's old pane bindings, bind only the leading pane.
+            paneToWindow = paneToWindow.filter { $0.value != w }
+            paneToWindow[leading] = w
+            windowLeadingPane[w] = leading
+            if parsed.hasSplit {
+                return [.diagnostic("window \(w.raw) has a split; showing leading pane \(leading.raw)")]
+            }
+            return []
+        case .output(let pane, let bytes):
+            guard let w = paneToWindow[pane] else { return [] }
+            return [.routeOutput(window: w, bytes: bytes)]
+        case .exit:
+            return [.tearDown]
         default:
-            return []                                     // output/layout/exit handled in Task 7
+            return []
         }
     }
 }
