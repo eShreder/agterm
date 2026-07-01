@@ -1,0 +1,152 @@
+import AppKit
+import Foundation
+import agtermCore
+
+/// Bridges a tmux `-CC` control-mode gateway to a live agterm workspace.
+///
+/// Owns a `TmuxGateway` (the ssh+tmux transport, agtermCore) and a `TmuxSessionModel`
+/// (the window→session folding, agtermCore), and mirrors each tmux window as a
+/// headless-backed agterm `Session`: a `GhosttySurfaceView` seeded into `Session.surface`
+/// BEFORE the eager deck mounts its `TerminalView`, so the deck hosts the headless surface
+/// instead of spawning a shell. `%output` bytes render via the surface's `writeOutput`; the
+/// surface's keystrokes/resizes flow back out as `send-keys`/`refresh-client -C`.
+///
+/// `@MainActor`: every store/session/surface touch is main-actor work. The gateway's
+/// `Callbacks` closures arrive OFF the main actor (on `PTYProcess`'s background queue), so each
+/// hops via `DispatchQueue.main.async` before touching anything here — mirroring
+/// `GhosttyCallbacks`. It NEVER uses `MainActor.assumeIsolated`.
+@MainActor final class TmuxController {
+    private let store: AppStore
+    private var gateway: TmuxGateway?
+    private var model = TmuxSessionModel()
+    private var workspaceID: UUID?
+    private var windowToSession: [TmuxWindowID: UUID] = [:]       // tmux window -> agterm session
+    private var pendingLeadingPane: [TmuxWindowID: TmuxPaneID] = [:]
+    private var bootstrapSessionID: UUID?
+
+    init(store: AppStore) { self.store = store }
+
+    deinit { gateway?.stop() }
+
+    /// Spawn `ssh -tt <host> tmux -CC new -A -s <name>` in a pty and begin the bootstrap phase.
+    /// `-tt` forces a tty so tmux enters control mode; `new -A` attaches-or-creates the session.
+    func attach(host: String, sessionName: String) {
+        let ws = store.addWorkspace(name: "tmux: \(host)")
+        workspaceID = ws.id
+        let gw = TmuxGateway(callbacks: .init(
+            onBootstrapBytes: { data in DispatchQueue.main.async { [weak self] in self?.applyBootstrap(data) } },
+            onHandshake: { DispatchQueue.main.async { [weak self] in self?.onHandshake() } },
+            onEvent: { event in DispatchQueue.main.async { [weak self] in self?.apply(event) } },
+            onExit: { _ in DispatchQueue.main.async { [weak self] in self?.onExit() } }))
+        self.gateway = gw
+        let remote = "tmux -CC new -A -s \(sessionName)"
+        let args = ["/usr/bin/ssh", "-tt", host, remote]
+        try? gw.start(path: "/usr/bin/ssh", args: args, env: ProcessInfo.processInfo.environment)
+    }
+
+    /// Send `detach-client` and tear down the local workspace (also stops the gateway).
+    func detach() {
+        gateway?.send(.detachClient)
+        teardownWorkspace()
+    }
+
+    // MARK: - Event → model → effects
+
+    private func apply(_ event: TmuxEvent) {
+        // Record the window's leading pane BEFORE folding into the model, so `sendKeys` has a
+        // target the instant a fresh surface is wired. The model tracks pane→window internally
+        // but doesn't expose the leading pane.
+        if case let .layoutChange(window, layout) = event {
+            if let leading = TmuxLayout.panes(in: layout).panes.first { pendingLeadingPane[window] = leading }
+        }
+        for effect in model.handle(event) { apply(effect) }
+    }
+
+    private func apply(_ effect: TmuxModelEffect) {
+        guard let workspaceID else { return }
+        switch effect {
+        case .createSession(let window, let name):
+            guard let session = store.addSession(
+                toWorkspace: workspaceID, cwd: "", name: name.isEmpty ? "tmux" : name)
+            else { return }
+            windowToSession[window] = session.id
+            session.surface = makeHeadlessSurface(for: window)
+        case .renameSession(let window, let name):
+            if let id = windowToSession[window] { store.renameSession(id, to: name) }
+        case .removeSession(let window):
+            if let id = windowToSession.removeValue(forKey: window) { store.closeSession(id) }
+            pendingLeadingPane[window] = nil
+        case .routeOutput(let window, let bytes):
+            if let id = windowToSession[window], let session = store.session(withID: id),
+               let view = session.surface as? GhosttySurfaceView {
+                view.writeOutput(Data(bytes))
+            }
+        case .tearDown:
+            teardownWorkspace()
+        case .diagnostic(let message):
+            NSLog("tmux: \(message)")
+        }
+    }
+
+    /// A headless `GhosttySurfaceView` wired to route this window's input/resize back to tmux.
+    /// Seeding it into `Session.surface` before the deck mounts stops the shell factory.
+    private func makeHeadlessSurface(for window: TmuxWindowID) -> GhosttySurfaceView {
+        let view = GhosttySurfaceView(workingDirectory: "")   // headless ignores cwd
+        view.makeHeadless(onInput: { [weak self] data in
+            self?.sendKeys(window: window, bytes: Array(data))
+        })
+        view.headlessOnResize = { [weak self] cols, rows in
+            self?.gateway?.send(.resizeClient(cols: Int(cols), rows: Int(rows)))
+        }
+        return view
+    }
+
+    private func sendKeys(window: TmuxWindowID, bytes: [UInt8]) {
+        // Under no-splits the target is the window's leading pane, recorded from `.layoutChange`.
+        guard let pane = pendingLeadingPane[window] else { return }
+        gateway?.send(.sendKeys(pane: pane, bytes: bytes))
+    }
+
+    // MARK: - Bootstrap (ssh auth)
+
+    /// On the FIRST bootstrap bytes, create one visible "connecting…" session whose headless
+    /// surface forwards keystrokes raw via `writeBootstrap`; render each ssh-prompt chunk into it.
+    private func applyBootstrap(_ data: Data) {
+        guard let workspaceID else { return }
+        if bootstrapSessionID == nil {
+            guard let session = store.addSession(toWorkspace: workspaceID, cwd: "", name: "connecting…")
+            else { return }
+            bootstrapSessionID = session.id
+            let view = GhosttySurfaceView(workingDirectory: "")   // headless ignores cwd
+            view.makeHeadless(onInput: { [weak self] bytes in self?.gateway?.writeBootstrap(bytes) })
+            session.surface = view
+            store.selectSession(session.id)
+        }
+        if let id = bootstrapSessionID, let session = store.session(withID: id),
+           let view = session.surface as? GhosttySurfaceView {
+            view.writeOutput(data)
+        }
+    }
+
+    /// tmux entered control mode: the auth phase is over, so close the bootstrap session.
+    private func onHandshake() {
+        if let id = bootstrapSessionID { store.closeSession(id); bootstrapSessionID = nil }
+    }
+
+    // MARK: - Teardown
+
+    private func onExit() { teardownWorkspace() }
+
+    /// Remove the local workspace and stop the gateway. Stopping is MANDATORY on every teardown
+    /// path: `PTYProcess.deinit` does not reliably close its fd, so an explicit `stop()`
+    /// (→ `pty.terminate()`) is required to avoid an fd leak / orphaned child.
+    private func teardownWorkspace() {
+        if let id = bootstrapSessionID { store.closeSession(id); bootstrapSessionID = nil }
+        if let workspaceID { store.removeWorkspace(workspaceID) }
+        workspaceID = nil
+        windowToSession.removeAll()
+        pendingLeadingPane.removeAll()
+        gateway?.stop()
+        gateway = nil
+    }
+}
