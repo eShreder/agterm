@@ -135,9 +135,9 @@ final class AppActions {
     /// Attach to a remote tmux session over ssh (`ssh -tt <host> tmux -CC new -A -s <name>`), mirroring
     /// each tmux window into a fresh "tmux: <host>" workspace in the frontmost window's store. No-op
     /// when no window is open. (Phase 4 exposes this over the control channel; Task 6 wires the entry.)
-    func attachTmux(host: String, sessionName: String) {
+    func attachTmux(host: String, sessionName: String, workspaceName: String? = nil) {
         guard let store else { return }
-        tmuxController(for: store).attach(host: host, sessionName: sessionName)
+        tmuxController(for: store).attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
     }
 
     /// Attach to a LOCAL tmux session (`tmux -CC new -A -s <name>`, no ssh) — the Phase-3 end-to-end

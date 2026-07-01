@@ -153,8 +153,8 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 ## tmux
 
 - `tmux attach <host> [--session NAME] [--workspace NAME]` — spawn `ssh <host> tmux -CC …`; each tmux
-  window becomes an agterm session in a `tmux: <host>` workspace. No splits (a split window shows its
-  leading pane).
+  window becomes an agterm session in a workspace named by `--workspace` (default `tmux: <host>`).
+  No splits (a split window shows its leading pane).
 - `tmux detach <id>` — soft detach (`detach-client`); the local workspace is removed, the remote tmux
   session persists for reattach. `<id>` is the connection/workspace id from `tmux list`.
 - `tmux kill <id>` — hard `kill-session` on the remote; the tmux session is destroyed.

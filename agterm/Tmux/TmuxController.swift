@@ -62,13 +62,13 @@ import agtermCore
 
     /// Spawn `ssh -tt <host> tmux -CC new -A -s <name>` in a pty and begin the bootstrap phase.
     /// `-tt` forces a tty so tmux enters control mode; `new -A` attaches-or-creates the session.
-    func attach(host: String, sessionName: String) {
+    func attach(host: String, sessionName: String, workspaceName: String? = nil) {
         // Re-attach without an intervening detach: tear down the live gateway first so it's
         // `stop()`ped (a bare reassign would leak its pty fd / orphan the child) before the new
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = host
-        workspaceID = store.addWorkspace(name: "tmux: \(host)").id
+        workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)").id
         let remote = "tmux -CC new -A -s \(sessionName)"
         startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
                      env: ProcessInfo.processInfo.environment)

@@ -556,7 +556,8 @@ final class ControlServer {
             guard let host = request.args?.host else {
                 return ControlResponse(ok: false, error: "tmux.attach requires a host")
             }
-            actions.attachTmux(host: host, sessionName: request.args?.name ?? "main")
+            actions.attachTmux(host: host, sessionName: request.args?.name ?? "main",
+                                workspaceName: request.args?.workspace)
             return ControlResponse(ok: true)
         case .tmuxDetach:
             guard actions.detachTmux(connectionID: request.target) else {
