@@ -252,6 +252,7 @@ struct agtermApp: App {
                 Button("Clear Status") { actions.clearActiveSessionStatus() }
                     .keyboardShortcut(shortcut(for: .clearStatus))
                     .disabled(library.activeStore?.activeSession == nil)
+                Button("Attach tmux Session…") { actions.attachTmuxPrompt() }
                 Divider()
                 // open keymap.conf in $EDITOR in a 95% overlay over the active session; it reloads on the
                 // editor exiting. Keyless, like Reload Keymap.

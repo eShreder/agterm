@@ -172,6 +172,30 @@ final class AppActions {
         tmuxController(for: store).attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
     }
 
+    /// Prompt for an ssh host and tmux session name via a standard `NSAlert` with a two-field accessory
+    /// view (mirroring `renameActiveWindow`'s single-field precedent), then call `attachTmux`. Cancel or
+    /// a blank host is a no-op; a blank session name defaults to "main". The GUI entry point for File ▸
+    /// Attach tmux Session…; the control channel's `tmux.attach` covers the same action non-interactively.
+    func attachTmuxPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "Attach tmux Session"
+        alert.informativeText = "ssh host, and the tmux session name (default: main)."
+        alert.addButton(withTitle: "Attach"); alert.addButton(withTitle: "Cancel")
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 52))
+        let hostField = NSTextField(frame: NSRect(x: 0, y: 28, width: 260, height: 24))
+        hostField.placeholderString = "user@host"
+        let sessionField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        sessionField.placeholderString = "session (default: main)"
+        container.addSubview(hostField); container.addSubview(sessionField)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = hostField
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let host = hostField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { return }
+        let session = sessionField.stringValue.trimmingCharacters(in: .whitespaces)
+        attachTmux(host: host, sessionName: session.isEmpty ? "main" : session)
+    }
+
     /// Attach to a LOCAL tmux session (`tmux -CC new -A -s <name>`, no ssh) — the Phase-3 end-to-end
     /// gate path (env-gated launch hook in `agtermApp`). No-op when no window is open.
     func attachLocal(sessionName: String) {
