@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 import agtermCore
 
 /// Bridges a tmux `-CC` control-mode gateway to a live agterm workspace.
@@ -16,6 +17,7 @@ import agtermCore
 /// hops via `DispatchQueue.main.async` before touching anything here — mirroring
 /// `GhosttyCallbacks`. It NEVER uses `MainActor.assumeIsolated`.
 @MainActor final class TmuxController {
+    private static let log = Logger(subsystem: "com.umputun.agterm", category: "tmux")
     private let store: AppStore
     private var gateway: TmuxGateway?
     private var model = TmuxSessionModel()
@@ -68,7 +70,7 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = host
-        workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)").id
+        workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)", ephemeral: true).id
         let remote = "tmux -CC new -A -s \(sessionName)"
         startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
                      env: ProcessInfo.processInfo.environment)
@@ -87,7 +89,7 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = "local"
-        workspaceID = store.addWorkspace(name: "tmux: local").id
+        workspaceID = store.addWorkspace(name: "tmux: local", ephemeral: true).id
         let env = ProcessInfo.processInfo.environment
         let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"
         let socketArgs = env["AGTERM_TMUX_SOCKET"].map { ["-L", $0] } ?? []
@@ -163,6 +165,7 @@ import agtermCore
             else { return }
             windowToSession[window] = session.id
             session.surface = makeHeadlessSurface(for: window)
+            session.tmuxBinding = TmuxBinding(connectionID: workspaceID ?? UUID(), window: window)
         case .renameSession(let window, let name):
             if let id = windowToSession[window] { store.renameSession(id, to: name) }
         case .removeSession(let window):
@@ -176,8 +179,30 @@ import agtermCore
         case .tearDown:
             teardownWorkspace()
         case .diagnostic(let message):
-            NSLog("tmux: \(message)")
+            Self.log.info("\(message, privacy: .public)")
         }
+    }
+
+    // MARK: - Local → tmux (reverse rename/kill)
+
+    /// The tmux window mirroring `sessionID`, if this connection owns it.
+    private func window(forSession sessionID: UUID) -> TmuxWindowID? {
+        windowToSession.first(where: { $0.value == sessionID })?.key
+    }
+
+    /// True when `sessionID` is one of this connection's mirrored tmux windows.
+    func owns(session sessionID: UUID) -> Bool { window(forSession: sessionID) != nil }
+
+    /// Push a local rename out to tmux (`rename-window`). Returns false if not one of ours.
+    @discardableResult func renameWindow(session sessionID: UUID, to name: String) -> Bool {
+        guard let w = window(forSession: sessionID) else { return false }
+        gateway?.send(.renameWindow(w, name: name)); return true
+    }
+
+    /// Push a local close out to tmux (`kill-window`). Returns false if not one of ours.
+    @discardableResult func killWindow(session sessionID: UUID) -> Bool {
+        guard let w = window(forSession: sessionID) else { return false }
+        gateway?.send(.killWindow(w)); return true
     }
 
     /// A headless `GhosttySurfaceView` wired to route this window's input/resize back to tmux.
