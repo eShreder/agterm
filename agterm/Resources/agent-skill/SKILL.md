@@ -128,6 +128,8 @@ via `session status`: `active`|`completed`|`blocked`, omitted when idle).
 **tmux**
 - `attach <host> [--session NAME] [--workspace NAME]` — start an ssh + `tmux -CC` connection; its windows become native sessions.
 - `detach <id>` — detach (the tmux session survives on the server). · `kill <id>` — hard `kill-session`. · `list` — active connections + their windows.
+- Renaming/closing a tmux-backed session (`session rename`/`session close`) round-trips to the remote
+  tmux `rename-window`/`kill-window` instead of acting locally.
 
 **window** — `new [name]` · `list` · `select <id>` · `close <id>` · `rename <id> <name>` ·
 `delete <id>` · `resize <id> --width W --height H` · `move <id> --x X --y Y [--display N]`.

@@ -72,9 +72,13 @@ process — what it is running — omitted when the pane sits at its shell promp
   The command is run-once and not persisted (a restored session is a plain shell). `--name`
   seeds the session's custom name (the sidebar label; blank/omitted leaves the auto basename),
   equivalent to a `session rename` right after create.
-- `session close [--target] [--window W]`.
+- `session close [--target] [--window W]`. For a tmux-backed session (attached via `tmux attach`), this
+  routes to the remote tmux `kill-window` — the change lands on the tmux server, and the local session
+  follows via the tmux echo.
 - `session select [--target] [--window W]`.
-- `session rename <name> [--target] [--window W]`.
+- `session rename <name> [--target] [--window W]`. For a tmux-backed session (attached via `tmux attach`),
+  this routes to the remote tmux `rename-window` — the change lands on the tmux server, and the local
+  name follows via the tmux echo.
 - `session go --to next|prev|first|last|next-attention|prev-attention [--window W]` — move the
   selection relative to the CURRENT one (no `--target`). Operates over the VISIBLE/FILTERED set: the
   flagged sessions in flagged mode, the focused workspace's sessions when a workspace is focused, else
