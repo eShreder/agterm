@@ -206,8 +206,8 @@ struct Session: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Session commands.",
         subcommands: [New.self, Close.self, Select.self, Go.self, Rename.self, Move.self, TypeText.self,
-                      Split.self, Scratch.self, Focus.self, Copy.self, Status.self, FlagCommand.self,
-                      Search.self, Overlay.self]
+                      Split.self, Scratch.self, Focus.self, Resize.self, Copy.self, Status.self, FlagCommand.self,
+                      Search.self, Background.self, Overlay.self]
     )
 
     struct New: RequestCommand {
@@ -360,6 +360,43 @@ struct Session: ParsableCommand {
         }
     }
 
+    struct Resize: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Resize a split session's divider (set or nudge the left-pane fraction).")
+        @Option(name: .customLong("split-ratio"), help: "Absolute left-pane fraction 0..1 (e.g. 0.7). Clamped to 0.05..0.95.") var splitRatio: Double?
+        @Option(name: .customLong("grow-left"), help: "Grow the left pane by this fraction (e.g. 0.05); shrinks the right.") var growLeft: Double?
+        @Option(name: .customLong("grow-right"), help: "Grow the right pane by this fraction (e.g. 0.05); shrinks the left.") var growRight: Double?
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+
+        // exactly one of the three forms must be set; reject neither/multiple at parse time so it's a clean
+        // usage error, unit-testable without a socket. Prints the applied (clamped) fraction.
+        func validate() throws {
+            let values = [splitRatio, growLeft, growRight].compactMap { $0 }
+            guard values.count == 1 else {
+                throw ValidationError("provide exactly one of --split-ratio, --grow-left, or --grow-right")
+            }
+            // nan/inf parse as Double but fail to JSON-encode (a generic error after the socket opens), so
+            // reject non-finite input here with a clean usage error.
+            guard values[0].isFinite else {
+                throw ValidationError("the resize value must be a finite number")
+            }
+        }
+
+        func makeRequest() throws -> ControlRequest {
+            // grow-left/grow-right map to a signed wire delta (+ grows the left pane); split-ratio is absolute.
+            let args: ControlArgs
+            if let splitRatio {
+                args = ControlArgs(ratio: splitRatio)
+            } else if let growLeft {
+                args = ControlArgs(ratioDelta: growLeft)
+            } else {
+                args = ControlArgs(ratioDelta: -(growRight ?? 0))
+            }
+            return ControlRequest(cmd: .sessionResize, target: target.target, args: options.withWindow(args))
+        }
+    }
+
     struct Copy: RequestCommand {
         static let configuration = CommandConfiguration(abstract: "Print a session's selected text (does not touch the system clipboard).")
         @OptionGroup var target: TargetOptions
@@ -435,6 +472,91 @@ struct Session: ParsableCommand {
             let to = next ? "next" : prev ? "prev" : close ? "close" : nil
             return ControlRequest(cmd: .sessionSearch, target: target.target,
                                   args: options.withWindow(ControlArgs(text: needle, to: to)))
+        }
+    }
+
+    struct Background: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "background",
+            abstract: "Set or clear a session's background watermark (image or rasterized text).",
+            subcommands: [Image.self, Text.self, Clear.self]
+        )
+
+        /// Shared input validation against the host-free `WatermarkConfig`, so a bad value is a clean
+        /// parse error before any socket round-trip, matching the server's rejection exactly. The enum
+        /// checks reject `""` too, so no separate empty-string special-case is needed.
+        static func validate(fit: String? = nil, position: String? = nil, opacity: Double? = nil,
+                             color: String? = nil, text: String? = nil, path: String? = nil) throws {
+            if let fit, !WatermarkConfig.isValidFit(fit) {
+                throw ValidationError("fit must be one of: \(WatermarkConfig.validFits.joined(separator: ", "))")
+            }
+            if let position, !WatermarkConfig.isValidPosition(position) {
+                throw ValidationError("position must be one of: \(WatermarkConfig.validPositions.joined(separator: ", "))")
+            }
+            if let opacity, !WatermarkConfig.isValidOpacity(opacity) {
+                throw ValidationError("opacity must be between 0.0 and 1.0")
+            }
+            if let color, !WatermarkConfig.isValidColorHex(color) {
+                throw ValidationError("color must be a #rrggbb hex value")
+            }
+            if let text, !WatermarkConfig.isValidText(text) {
+                throw ValidationError("text must be 1–\(WatermarkConfig.maxTextLength) characters")
+            }
+            if let path, !WatermarkConfig.isValidImagePath(path) {
+                throw ValidationError("image path must not contain control characters")
+            }
+        }
+
+        struct Image: RequestCommand {
+            static let configuration = CommandConfiguration(abstract: "Show a PNG or JPEG image behind the terminal (auto-fits the window).")
+            @Argument(help: "Path to a PNG or JPEG image file.") var path: String
+            @Option(name: .long, help: "Image opacity 0.0-1.0 (default 1.0).") var opacity: Double?
+            @Option(name: .long, help: "Fit: contain (default), cover, stretch, or none.") var fit: String?
+            @Option(name: .long, help: "Position: center (default) or an edge/corner anchor (top-left, bottom-right, …).") var position: String?
+            @Flag(name: .customLong("repeat"), help: "Tile the image to fill blank space.") var repeatImage = false
+            @OptionGroup var target: TargetOptions
+            @OptionGroup var options: ClientOptions
+
+            func validate() throws { try Background.validate(fit: fit, position: position, opacity: opacity, path: path) }
+
+            func makeRequest() throws -> ControlRequest {
+                ControlRequest(cmd: .sessionBackground, target: target.target,
+                               args: options.withWindow(ControlArgs(mode: "image", path: path, opacity: opacity,
+                                                                    fit: fit, position: position,
+                                                                    repeats: repeatImage ? true : nil)))
+            }
+        }
+
+        struct Text: RequestCommand {
+            static let configuration = CommandConfiguration(abstract: "Render TEXT as a watermark behind the terminal (auto-fits the window).")
+            @Argument(help: "Watermark text.") var text: String
+            @Option(name: .long, help: "Text color as #rrggbb (default: the terminal foreground color).") var color: String?
+            @Option(name: .long, help: "Opacity 0.0-1.0 (default 1.0).") var opacity: Double?
+            @Option(name: .long, help: "Fit: contain (default), cover, stretch, or none.") var fit: String?
+            @Option(name: .long, help: "Position: center (default) or an edge/corner anchor (top-left, bottom-right, …).") var position: String?
+            @OptionGroup var target: TargetOptions
+            @OptionGroup var options: ClientOptions
+
+            func validate() throws {
+                try Background.validate(fit: fit, position: position, opacity: opacity, color: color, text: text)
+            }
+
+            func makeRequest() throws -> ControlRequest {
+                ControlRequest(cmd: .sessionBackground, target: target.target,
+                               args: options.withWindow(ControlArgs(text: text, mode: "text", color: color,
+                                                                    opacity: opacity, fit: fit, position: position)))
+            }
+        }
+
+        struct Clear: RequestCommand {
+            static let configuration = CommandConfiguration(abstract: "Remove the session's background watermark.")
+            @OptionGroup var target: TargetOptions
+            @OptionGroup var options: ClientOptions
+
+            func makeRequest() throws -> ControlRequest {
+                ControlRequest(cmd: .sessionBackground, target: target.target,
+                               args: options.withWindow(ControlArgs(mode: "clear")))
+            }
         }
     }
 
@@ -528,7 +650,7 @@ struct Session: ParsableCommand {
 struct Window: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Window commands.",
-        subcommands: [New.self, List.self, Select.self, Close.self, Rename.self, Delete.self, Resize.self, Move.self]
+        subcommands: [New.self, List.self, Select.self, Close.self, Rename.self, Delete.self, Resize.self, Move.self, Zoom.self]
     )
 
     struct New: RequestCommand {
@@ -607,6 +729,14 @@ struct Window: ParsableCommand {
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .windowMove, target: id, args: ControlArgs(x: x, y: y, display: display))
         }
+    }
+
+    struct Zoom: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Zoom a window (maximize-to-screen toggle).")
+        @Argument(help: "Window id, unique prefix, or 'active'.") var id: String = "active"
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .windowZoom, target: id) }
     }
 }
 

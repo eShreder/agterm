@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.2 - 2026-07-01
+
+### Bug Fixes
+
+- right-click paste works out of the box, with a General settings toggle to disable it #63 @umputun
+- file drops land on the visible session instead of an invisible background one #63 @umputun
+
+## v0.4.1 - 2026-07-01
+
+### Improvements
+
+- double-click the window header to zoom, honoring the macOS title-bar double-click setting #33 @fkirill
+- session.resize control command to move the split divider #59 @umputun
+- reorganize Settings into five focused tabs #60 @umputun
+
+### Bug Fixes
+
+- restore sessions started with a command (e.g. ssh) on relaunch, instead of coming back as plain shells #61 @umputun
+
 ## v0.4.0 - 2026-06-30
 
 ### New Features

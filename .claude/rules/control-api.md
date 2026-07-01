@@ -86,7 +86,7 @@ paths:
   The skill is a REFERENCE/knowledge skill (both user-invocable via `/agterm` and model-triggered,
   `allowed-tools: Bash(agtermctl *)`; the agent-neutral `description` carries the trigger nouns since
   Codex may ignore the extra `when_to_use` field — unknown frontmatter is harmless),
-  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 46-command
+  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 53-command
   summary + the image-display helper + a troubleshooting/reporting pointer;
   `reference.md` full per-command detail + keymap format; `examples.md` agtermctl recipes;
   `troubleshooting.md` diagnosing the common problems (keymap editor, custom actions,
@@ -156,15 +156,15 @@ paths:
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (50 commands):**
+- **Command catalog (53 commands):**
   - `tree`
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
-  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.go`/`session.copy`/`session.search`/`session.status`/`session.flag`/`session.overlay.open`/`session.overlay.close`/`session.overlay.result`
+  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.search`/`session.status`/`session.flag`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.result`
   - `quick`
   - `sidebar`/`sidebar.mode`/`sidebar.expand`/`sidebar.collapse`
   - `notify`
   - `font.inc`/`font.dec`/`font.reset`
-  - `window.new`/`window.list`/`window.select`/`window.close`/`window.rename`/`window.delete`/`window.resize`/`window.move` (see the Windows section)
+  - `window.new`/`window.list`/`window.select`/`window.close`/`window.rename`/`window.delete`/`window.resize`/`window.move`/`window.zoom` (see the Windows section)
   - `keymap.reload` (see the Keymap section)
   - `config.reload` (see the Settings section)
   - `theme.set`/`theme.list` (see the Theme picker section)
@@ -228,6 +228,26 @@ paths:
   shown side-by-side or hidden — when hidden, focusing a pane swaps which one shows maximized),
   drives `AppActions.setSplitFocus(_:of:)`, and is the control half of the ⌘⌥←/→ keyboard nav + the "Focus
   Left/Right Pane" menu/palette items.
+  `session.resize` moves the split DIVIDER — it is control-NATIVE (the divider is otherwise mouse-drag
+  only; NO GUI/menu/keymap action, so a key is bound by mapping a `command "agtermctl session resize …"`
+  custom action).
+  `args.ratio` sets the absolute left-pane fraction; `args.ratioDelta` is a signed relative nudge (the
+  CLI's `--grow-left`/`--grow-right` map to ±`ratioDelta`, applied to the current fraction,
+  `AppStore.splitRatioDefault` = 0.5 when never moved); exactly one must be set (neither/both error).
+  It errors when the session has no split (mirroring `session.focus`), clamps + persists via the host-free
+  `AppStore.applySplitRatio` (→ `AppStore.clampSplitRatio`, `splitRatioMin...splitRatioMax`),
+  then posts the object-scoped `.agtermApplySplitRatio` (object = the `Session`) so the matching `SplitProbeView`
+  (`ContentView`) moves the LIVE divider via `setPosition` — a no-op when the split is hidden (no live
+  `NSSplitView`; the stored fraction applies on next show).
+  It echoes the applied (clamped) fraction in the new `ControlResult.ratio` (the CLI prints it as a bare
+  `%.3f` number, scriptable).
+  Four-point keep-in-sync audit for `session.resize`: (1) `case sessionResize = "session.resize"` +
+  `ControlArgs.ratio`/`ratioDelta` + `ControlResult.ratio` in `ControlProtocol.swift`,
+  (2) the `.sessionResize` dispatch arm (`resizeSplit`) in `ControlServer` (+ the `SplitProbeView` re-apply
+  observer in `ContentView`), (3) the `session resize --split-ratio|--grow-left|--grow-right` subcommand
+  (`Resize`, `validate()`-guarded exactly-one) in `agtermctlKit` + the `result.ratio` format arm in `SocketClient`,
+  (4) round-trip in `ControlProtocolTests` + `AppStoreTests` (clamp/apply) + `CommandsTests` (validate/mapping)
+  + `SocketClientTests` (format) + the e2e `testSessionResizeSplitDivider` in `ControlAPIUITests`.
   `session.go` navigates BETWEEN sessions — `args.to` is `next`|`prev`|`first`|`last`|`next-attention`|`prev-attention`
   and acts on the target store's CURRENT selection (it is RELATIVE, so it resolves the placement store
   via `resolvePlacementStore` rather than a session target — there is NO `--target`),
@@ -257,8 +277,11 @@ paths:
   `args.command` runs that command AS the session's process instead of the login shell (like kitty's
   `launch <cmd>` / ghostty's `command`) — NO echoed command line, and the session closes when the command
   exits (the normal single-pane `onExit` → `closePrimaryPane`).
-  It is transient + run-once: `Session.initialCommand` is `@ObservationIgnored` and absent from `SessionSnapshot`,
-  so a restored session is a plain shell.
+  `Session.initialCommand` is `@ObservationIgnored` but PERSISTED via `SessionSnapshot.initialCommand`, so it
+  re-runs on restore (through the same `config.command` exec path) when the **restore-running-command** opt-in
+  is on — gated via the transient `Session.wasRestored` so a fresh session always runs its command while a
+  restored one honors the toggle (default off → a restored session is a plain shell); a live captured
+  foreground preempts it, and `closePrimaryPane` clears it when a command pane exits into a promoted split.
   The arm threads `request.args?.command` into `AppStore.addSession(…, command:)`,
   which `makeSurface` passes to `GhosttySurfaceView(command:)` → `config.command` RAW (`strdup`,
   NO wrapper). libghostty tokenizes it into argv (shell-like word-splitting that RESPECTS quotes) and
@@ -546,10 +569,15 @@ paths:
   capture the restore-running-command feature uses (`ghostty_surface_foreground_pid` → `sysctl(KERN_PROCARGS2)`
   → host-free `CommandRestore`), populated in the tree builder per session so a script can read "what
   is each pane running".
-  `restore.clear` clears every open session's saved foreground command (`Session.foregroundCommand`/`splitForegroundCommand`)
-  and persists via `library.saveAllOpen()`, so the next restart restores plain shells instead of re-running
-  the captured commands (also closing the force-quit re-fire: the restored command is consumed in memory
-  but its on-disk copy lingers until the next save, which a force-quit skips).
+  It ALSO surfaces `background` on each node — the `BackgroundWatermark` spec set via `session.background`
+  (omitted when none), the read side of set/clear so a script can query the current watermark.
+  `restore.clear` clears every open session's saved CAPTURED foreground command (`Session.foregroundCommand`/`splitForegroundCommand`)
+  and persists via `library.saveAllOpen()`, so the next restart restores plain shells for those panes instead
+  of re-running the captured commands (also closing the force-quit re-fire: the restored command is consumed
+  in memory but its on-disk copy lingers until the next save, which a force-quit skips).
+  It does NOT clear a `session.new --command` session's own `initialCommand` (the durable creation identity),
+  which still re-runs on restore when the setting is on — `restore.clear` is scoped to captured foreground
+  commands only.
   App-global like `keymap.reload` (clears all open windows, no `--window`).
   Four-point keep-in-sync audit for `restore.clear`: (1) `case restoreClear = "restore.clear"` in `ControlProtocol.swift`
   (no target/args; `foreground`/`splitForeground` added to `ControlSessionNode`),
@@ -558,7 +586,42 @@ paths:
   (4) round-trip (`restoreClearRoundTrips` + `treeSessionNodeRoundTripsWithForeground`/`…OmitsForegroundWhenNil`)
   in `ControlProtocolTests` + the e2e (`testTreeExposesForegroundProcess`,
   `testRestoreClearSucceeds`) in `ControlAPIUITests`.
+  `session.background` (target = session) sets or clears a per-session background watermark composited
+  behind the terminal grid by libghostty `background-image*` keys — `args.mode` is `image`/`text`/`clear`:
+  `image` needs `args.path` (PNG/JPEG, validated for format + existence + no control chars in the path),
+  `text` needs `args.text` (capped at 256 chars; + optional `args.color` #rrggbb, default the terminal
+  foreground), and both accept `args.opacity` (0...1)/`args.fit`/`args.position`/`args.repeats` — opacity/color/fit/position
+  validated against the shared host-free `WatermarkConfig`, used by BOTH the CLI `validate()` and the server.
+  The `BackgroundWatermark` spec (host-free, `Codable`) is persisted in `SessionSnapshot` (survives restart)
+  via `AppStore.setBackgroundWatermark`, then applied to the session main + split surfaces as a PER-SURFACE
+  ghostty config overlay: `GhosttyApp.configWithOverlay` builds the same base files + an overlay file
+  (`WatermarkConfig.overlayText`: the `background-image*` lines + `background-opacity = 1` so the image
+  shows even under window translucency, which pins the global `background-opacity` to 0, + a `font-size`
+  line so the per-session cmd-+/- zoom is not reset by the push), and `GhosttySurfaceView.applyWatermarkFromSession`
+  calls `ghostty_surface_update_config`, RETAINING each per-surface config in `ownedConfigs` and freeing
+  it only on surface teardown (safe — the consumer is gone — unlike the never-freed app-wide config).
+  libghostty auto-fits the image to the surface and RE-FITS on resize (no app-side resize code);
+  a `.text` watermark rasterizes to a PNG under `<stateDir>/watermarks/<sessionID>.png` via the app-side
+  `WatermarkRenderer` (AppKit; default tint = the live terminal foreground), regenerated on restore +
+  cleared on `clear`, on `text`→`image` switch, and on permanent session/workspace/window removal.
+  A global `config.reload`/settings change broadcasts the SHARED config (no image) to every surface via
+  `applyConfig`, WIPING any watermark — so `GhosttyApp.reloadConfig` re-resolves the theme colors and
+  then calls `reapplyWatermarkIfNeeded` on each surface AFTER the broadcast to re-assert it (the theme
+  colors first, so a default-tinted `.text` watermark re-renders with the new foreground, not the old).
+  `BackgroundWatermark.fit`/`position` are typed `Fit`/`Position` `CaseIterable` enums (like `Kind`), not
+  raw `String` — the raw values match ghostty's keys so they serialize identically, and a bad value can't
+  reach a config line (only `imagePath` stays free text, re-validated on emit by `overlayText`, closing the
+  restore-path injection as defense-in-depth). The spec is READ back on each `tree` node's `background` field.
+  Four-point keep-in-sync audit for `session.background`: (1) `case sessionBackground = "session.background"`
+  + `ControlArgs.path`/`color`/`opacity`/`fit`/`position`/`repeats` in `ControlProtocol.swift` (+ `background`
+  on `ControlSessionNode` for the read-back),
+  (2) the `.sessionBackground` dispatch arm (`setBackground`, validating + building the spec, then `applyWatermark`
+  to the realized surfaces) in `ControlServer` (+ `background:` populated in the tree builder), (3) the
+  `session background image|text|clear` subcommands in `agtermctlKit` (shared opacity/color/fit/position
+  `validate()`), (4) round-trip in `ControlProtocolTests` (incl. `treeSessionNodeRoundTripsWithBackground`)
+  + `WatermarkConfigTests` + `WatermarkStorageTests` + `CommandsTests` (CLI parse + bad-arg rejection)
+  + the e2e `testSessionBackgroundSetClearAndValidation` in `ControlAPIUITests` (set/clear + tree read-back).
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 50 to match.
+  examples.md recipes) and the command count there is bumped to 53 to match.
 

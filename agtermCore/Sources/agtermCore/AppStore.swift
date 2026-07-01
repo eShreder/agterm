@@ -68,6 +68,14 @@ public final class AppStore {
     /// outside this range and `restore()` clamps to it, so the on-disk ratio is always within bounds.
     public static let splitRatioMin: Double = 0.05
     public static let splitRatioMax: Double = 0.95
+    /// The even split fraction a never-moved divider renders at (the `HSplitView` default); the base for a
+    /// relative `session.resize` when `Session.splitRatio` is still nil.
+    public static let splitRatioDefault: Double = 0.5
+
+    /// Clamp a left-pane split fraction to `splitRatioMin...splitRatioMax`.
+    public static func clampSplitRatio(_ ratio: Double) -> Double {
+        min(splitRatioMax, max(splitRatioMin, ratio))
+    }
 
     /// Most-recently-selected session ids, front = current. Drives the Ctrl-Tab switcher
     /// (`items[1]` is the previous session). `@ObservationIgnored`: read imperatively by the
@@ -247,6 +255,7 @@ public final class AppStore {
         removed.splitSurface?.teardown()
         removed.overlaySurface?.teardown()
         removed.scratchSurface?.teardown()
+        WatermarkStorage.removeRenderedText(sessionID: sessionID) // drop any rendered .text PNG; the session is gone
         sessionRecency.remove(sessionID)
         if wasActive {
             selectedSessionID = reselectionTarget(after: location)
@@ -274,6 +283,7 @@ public final class AppStore {
             session.splitSurface?.teardown()
             session.overlaySurface?.teardown()
             session.scratchSurface?.teardown()
+            WatermarkStorage.removeRenderedText(sessionID: session.id) // drop any rendered .text PNG; the session is gone
             sessionRecency.remove(session.id)
         }
         if focusedWorkspaceID == workspaceID { focusedWorkspaceID = nil } // the focused root is gone
@@ -302,6 +312,19 @@ public final class AppStore {
             session.splitFocused = true
         }
         save()
+    }
+
+    /// Sets a session's split-divider left-pane fraction to `ratio`, clamped to the bounds, and persists.
+    /// Returns the applied (clamped) fraction, or nil when the id is unknown. Moving the LIVE divider is
+    /// driven separately by the caller (`session.resize` posts `.agtermApplySplitRatio` to the pane view) —
+    /// this is control-native, so there is no GUI surface that goes through `AppActions`.
+    @discardableResult
+    public func applySplitRatio(_ ratio: Double, forSession id: UUID) -> Double? {
+        guard let session = session(withID: id) else { return nil }
+        let applied = AppStore.clampSplitRatio(ratio)
+        session.splitRatio = applied
+        save()
+        return applied
     }
 
     /// Closes the split pane: hides it AND tears down its surface, so a subsequent split
@@ -341,6 +364,9 @@ public final class AppStore {
         session.hasSplit = false
         session.splitFocused = true
         session.splitRatio = nil // promoted to a single pane; a later split should open even, not stale
+        // the command pane is gone — the promoted survivor is a plain shell, so drop the creation command
+        // or a restart would resurrect the exited command instead of restoring the promoted shell.
+        session.initialCommand = nil
         if let cwd = session.splitCwd { session.currentCwd = cwd }
         // the primary surface (possibly the search owner) is torn down while the session survives as the
         // promoted split, so reset search rather than leave a stuck bar pinned to the gone primary.
@@ -604,6 +630,27 @@ public final class AppStore {
         save()
     }
 
+    /// Sets (or clears) a session's background watermark and persists it. Clean no-op (no write) for an
+    /// unknown id or when the spec is unchanged, so a repeated `session.background` set is idempotent.
+    /// Returns whether the spec actually CHANGED, so the app target can gate the (retained, teardown-only-
+    /// freed) per-surface config apply on a real change — without it, a scripted set-loop keeps appending
+    /// owned configs. The app target applies it to the session's surface(s) after this returns (the
+    /// host-free store owns only the spec; the C-boundary apply lives in `ControlServer`/`GhosttySurfaceView`).
+    @discardableResult
+    public func setBackgroundWatermark(_ watermark: BackgroundWatermark?, forSession id: UUID) -> Bool {
+        guard let session = session(withID: id), session.backgroundWatermark != watermark else { return false }
+        let previous = session.backgroundWatermark
+        session.backgroundWatermark = watermark
+        // a `.text` watermark owns a rendered `<id>.png`; switching to anything that isn't `.text` (an
+        // image, or nil) leaves it id-keyed but unreferenced, so drop it here. `clear`/teardown also sweep
+        // the same id-keyed file, so this is just the eager reclaim for the text→image/nil transition.
+        if previous?.kind == .text, watermark?.kind != .text {
+            WatermarkStorage.removeRenderedText(sessionID: id)
+        }
+        save()
+        return true
+    }
+
     /// Unflags every session across all workspaces in one `save()`. No-ops (no write) when nothing is
     /// flagged. Backs the Clear Flagged action and the `session.flag clear` control mode.
     public func clearFlags() {
@@ -669,7 +716,9 @@ public final class AppStore {
                                 splitCwd: session.splitCwd ?? session.initialSplitCwd, splitRatio: session.splitRatio,
                                 flagged: session.flagged,
                                 foregroundCommand: session.foregroundCommand,
-                                splitForegroundCommand: session.splitForegroundCommand)
+                                splitForegroundCommand: session.splitForegroundCommand,
+                                initialCommand: session.initialCommand,
+                                backgroundWatermark: session.backgroundWatermark)
             })
         }
         return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots,
@@ -699,6 +748,9 @@ public final class AppStore {
                 session.flagged = sessionSnapshot.flagged ?? false
                 session.foregroundCommand = sessionSnapshot.foregroundCommand
                 session.splitForegroundCommand = sessionSnapshot.splitForegroundCommand
+                session.initialCommand = sessionSnapshot.initialCommand
+                session.wasRestored = true
+                session.backgroundWatermark = sessionSnapshot.backgroundWatermark
                 return session
             }
             return Workspace(id: workspaceSnapshot.id, name: workspaceSnapshot.name, sessions: sessions)

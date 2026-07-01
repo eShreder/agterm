@@ -60,9 +60,25 @@ ws=$(agtermctl workspace new "build" --json | jq -r '.result.id')
 a=$(agtermctl session new --workspace "$ws" --cwd "$HOME/proj" --json | jq -r '.result.id')
 agtermctl session rename "server" --target "$a"
 agtermctl session split on --target "$a"          # second shell side by side
+agtermctl session resize --split-ratio 0.7 --target "$a"   # left pane gets 70% (prints 0.700)
 b=$(agtermctl session new --workspace "$ws" --json | jq -r '.result.id')
 agtermctl session rename "logs" --target "$b"
 ```
+
+## Resize the split divider from a keybinding
+
+The divider is otherwise mouse-drag only — there is no built-in resize action, so bind keys to the CLI
+with `command "<name>" <chord> <shell…>` custom actions in `keymap.conf` (then `agtermctl keymap reload`):
+
+```conf
+# grow/shrink the left pane by 5% per press; cmd+ctrl+0 resets to an even split
+command "grow left pane"  cmd+ctrl+l agtermctl session resize --grow-left 0.05
+command "grow right pane" cmd+ctrl+h agtermctl session resize --grow-right 0.05
+command "even split"      cmd+ctrl+0 agtermctl session resize --split-ratio 0.5
+```
+
+`--split-ratio` is absolute (0..1); `--grow-left`/`--grow-right` are relative nudges. All clamp to
+0.05..0.95 and print the applied fraction.
 
 ## Run a program in a blocking overlay and read its status
 
@@ -120,6 +136,27 @@ magick favicon.png -filter point -resize 256x256 /tmp/big.png
 ```
 
 Outside agterm (`AGTERM_ENABLED` unset) there is no overlay — fall back to `open img.png` (Preview).
+
+## Set a background watermark
+
+A persistent backdrop behind the terminal grid (distinct from `show-image.sh`, which is a transient
+overlay). Image or rasterized text, per session, auto-fitting the window (and re-fitting on resize);
+it survives a relaunch.
+
+```bash
+# rasterized text watermark on this session, faint
+agtermctl session background text "STAGING" --color '#ff5500' --opacity 0.15 --target "$AGTERM_SESSION_ID"
+
+# an image (PNG/JPEG), scaled to cover the window
+agtermctl session background image /abs/logo.png --fit cover --opacity 0.2 --target "$AGTERM_SESSION_ID"
+
+# remove it
+agtermctl session background clear --target "$AGTERM_SESSION_ID"
+```
+
+`--opacity` is 0.0–1.0; `--fit` is `contain` (default) / `cover` / `stretch` / `none`; `--position` is
+`center` (default) or an edge/corner anchor. A watermark renders the pane opaque (overriding window
+translucency), so the image is always visible.
 
 ## Toggle the scratch terminal
 
@@ -217,6 +254,7 @@ agtermctl session go --to next-attention  # jump to the next blocked/completed s
 w=$(agtermctl window new "scratch" --json | jq -r '.result.id')
 agtermctl window resize "$w" --width 1200 --height 800
 agtermctl window move "$w" --x 100 --y 100 --display 0
+agtermctl window zoom "$w"                 # maximize-to-screen toggle (call again to restore)
 agtermctl window select "$w"
 ```
 

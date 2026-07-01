@@ -391,6 +391,10 @@ private struct WindowContentView: View {
         // this subtree's shape/hit-testing must not change when a floating overlay opens (NSSplitView overrun).
         let hideForOverlay = fullOverlay || session.scratchActive
         let overlaid = session.overlayActive || session.scratchActive
+        // on-screen = selected session, not hidden by a full overlay/scratch. Shared by BOTH split panes
+        // (unlike the focus-gated `isActive`), it gates each surface's drag-type (un)registration so a file
+        // drop lands on the visible pane, not an invisible background deck surface (matches the panes' hit-testing).
+        let visible = isActive && !hideForOverlay
         ZStack {
             // the session's pane(s), kept MOUNTED while an overlay is up — shells stay alive, like the deck
             // does for inactive sessions. a FULL overlay hides them (opacity 0) so its translucency reveals the
@@ -399,7 +403,7 @@ private struct WindowContentView: View {
                 if session.isSplit {
                     HSplitView {
                         TerminalView(session: session, surfaceKeyPath: \.surface, makeSurface: makeSurface,
-                                     isActive: isActive && !session.splitFocused && !overlaid)
+                                     isActive: isActive && !session.splitFocused && !overlaid, deckVisible: visible)
                             .overlay { paneDim(session.splitFocused) }
                             // introspects the AppKit NSSplitView to persist/restore the divider ratio AND to
                             // clip its divider out of the titlebar strip (see SplitRatioAccessor); a background
@@ -407,7 +411,7 @@ private struct WindowContentView: View {
                             .background { SplitRatioAccessor(session: session, titlebarHeight: titlebarHeight, onPersist: { store.save() }) }
                             .id(session.id)
                         TerminalView(session: session, surfaceKeyPath: \.splitSurface, makeSurface: makeSplitSurface,
-                                     isActive: isActive && session.splitFocused && !overlaid)
+                                     isActive: isActive && session.splitFocused && !overlaid, deckVisible: visible)
                             .overlay { paneDim(!session.splitFocused) }
                             .id("\(session.id.uuidString)-split")
                     }
@@ -417,11 +421,11 @@ private struct WindowContentView: View {
                 } else if session.splitFocused, session.splitSurface != nil {
                     // split hidden while the right pane had focus: show that pane maximized.
                     TerminalView(session: session, surfaceKeyPath: \.splitSurface, makeSurface: makeSplitSurface,
-                                 isActive: isActive && !overlaid)
+                                 isActive: isActive && !overlaid, deckVisible: visible)
                         .id("\(session.id.uuidString)-split")
                 } else {
                     TerminalView(session: session, surfaceKeyPath: \.surface, makeSurface: makeSurface,
-                                 isActive: isActive && !overlaid)
+                                 isActive: isActive && !overlaid, deckVisible: visible)
                         .id(session.id)
                 }
             }
@@ -639,19 +643,23 @@ private struct WindowContentView: View {
     /// traffic lights.
     private var customTitlebar: some View {
         HStack(spacing: 0) {
-            Color.clear.frame(width: 78) // system traffic lights
+            Color.clear.frame(width: 78).allowsHitTesting(false) // system traffic lights
             if store.sidebarVisible {
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     sidebarToggleButton.labelStyle(.iconOnly)
                 }
                 .frame(width: max(40, CGFloat(store.sidebarWidth) - 78))
-                Color.clear.frame(width: 11) // 1px divider + gap to the title
+                Color.clear.frame(width: 11).allowsHitTesting(false) // 1px divider + gap to the title
             } else {
                 sidebarToggleButton.labelStyle(.iconOnly)
                 Spacer().frame(width: 12)
             }
             titleLabel
+                // the title text falls through to the drag/zoom layer behind it (see `.background` below),
+                // so double-clicking it zooms and dragging it moves the window — the rest of the row is
+                // empty spacers (already non-hittable) and the buttons, which keep their own clicks.
+                .allowsHitTesting(false)
             if attentionButtonEnabled {
                 attentionButton.labelStyle(.iconOnly).padding(.leading, 10)
             }
@@ -674,6 +682,21 @@ private struct WindowContentView: View {
         .imageScale(compactToolbar ? .medium : .large)
         .frame(height: titlebarHeight)
         .frame(maxWidth: .infinity)
+        // make the header behave like a standard title bar: single-click drag moves the window, double-click
+        // runs the user's configured title-bar action (zoom/minimize/none). The layer sits BEHIND the row,
+        // so the buttons render in front and keep their clicks; the empty spacers + the title text opt out of
+        // hit-testing (above) so their region falls through to it. Custom titlebar = no native title-bar
+        // double-click handling, hence this.
+        .background { WindowControlArea() }
+    }
+
+    /// A tooltip string with the action's current shortcut appended in parentheses (e.g. `Toggle
+    /// Sidebar (⌃⌘S)`), or just the base text when the action has no configured shortcut. Keeps the
+    /// toolbar/sidebar hints in lockstep with the keymap — a rebind shows the new chord, an unbound
+    /// action shows none — via the SAME `AppActions.shortcutGlyph` resolver the action palette uses.
+    private func helpHint(_ base: String, _ action: BuiltinAction) -> String {
+        guard let glyph = actions.shortcutGlyph(for: action) else { return base }
+        return "\(base) (\(glyph))"
     }
 
     /// Our own sidebar show/hide toggle (the custom split has no system one). Animated collapse.
@@ -683,7 +706,7 @@ private struct WindowContentView: View {
         } label: {
             Label("Toggle Sidebar", systemImage: "sidebar.left")
         }
-        .help("Toggle Sidebar")
+        .help(helpHint("Toggle Sidebar", .toggleSidebar))
         .accessibilityIdentifier("sidebar-toggle-button")
     }
 
@@ -698,7 +721,7 @@ private struct WindowContentView: View {
             // split (shown or hidden), matching the sidebar's split-session icon.
             Label("Split", systemImage: hasSplit ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
         }
-        .help(isSplit ? "Hide split" : (hasSplit ? "Show split" : "Split right"))
+        .help(helpHint(isSplit ? "Hide split" : (hasSplit ? "Show split" : "Split right"), .toggleSplit))
         .disabled(store.activeSession == nil)
         .accessibilityIdentifier("split-toggle")
     }
@@ -713,7 +736,7 @@ private struct WindowContentView: View {
         } label: {
             Label("Scratch", systemImage: active ? "rectangle.inset.filled" : "rectangle")
         }
-        .help(active ? "Hide scratch terminal" : "Show scratch terminal")
+        .help(helpHint(active ? "Hide scratch terminal" : "Show scratch terminal", .toggleScratch))
         .disabled(store.activeSession == nil)
         .accessibilityIdentifier("scratch-toggle")
     }
@@ -727,7 +750,7 @@ private struct WindowContentView: View {
         } label: {
             Label("Quick Terminal", systemImage: "terminal")
         }
-        .help("Quick Terminal")
+        .help(helpHint("Quick Terminal", .quickTerminal))
         .accessibilityIdentifier("quick-terminal-toggle")
     }
 
@@ -751,7 +774,7 @@ private struct WindowContentView: View {
         .foregroundStyle(blocked ? Color(nsColor: GhosttyApp.shared.blockedStatusColor) : chromeText)
         .opacity(empty ? 0.35 : 1)
         .disabled(empty)
-        .help(empty ? "No sessions need attention" : "Show sessions that need attention")
+        .help(helpHint(empty ? "No sessions need attention" : "Show sessions that need attention", .showAttention))
         .accessibilityIdentifier("attention-button")
         .accessibilityValue(empty ? "none" : (blocked ? "blocked" : "attention"))
     }
@@ -843,7 +866,7 @@ private struct WindowContentView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .help("New Workspace")
+            .help(helpHint("New Workspace", .newWorkspace))
             .accessibilityLabel("New Workspace")
 
             Menu {
@@ -859,7 +882,7 @@ private struct WindowContentView: View {
             .tint(chromeText)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("New Session")
+            .help(helpHint("New Session", .newSession))
             .accessibilityLabel("Add session")
             .accessibilityIdentifier("add-session")
 
@@ -904,7 +927,7 @@ private struct WindowContentView: View {
             // chromeText foregroundStyle defeats SwiftUI's default disabled dimming, so mute it by hand.
             .disabled(store.sidebarMode == .tree && store.flaggedSessions.isEmpty)
             .opacity(store.sidebarMode == .tree && store.flaggedSessions.isEmpty ? 0.35 : 1)
-            .help(store.sidebarMode == .flagged ? "Show all sessions" : "Show flagged sessions")
+            .help(helpHint(store.sidebarMode == .flagged ? "Show all sessions" : "Show flagged sessions", .toggleFlaggedView))
             .accessibilityLabel("Toggle Flagged View")
             .accessibilityIdentifier("flagged-view-toggle")
         }
@@ -1197,6 +1220,58 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+/// A transparent AppKit layer placed behind the custom titlebar's decorative regions (the title text and
+/// the empty spacers, which opt out of SwiftUI hit-testing) so the header behaves like a real title bar:
+/// a single-click drag moves the window (`performDrag`) and a double-click runs the user's configured
+/// title-bar double-click action. The custom titlebar is a SwiftUI view, not AppKit's native title bar,
+/// so the OS double-click handling never reaches it; this restores it. The interactive header buttons
+/// render in front and keep their own clicks. `mouseDownCanMoveWindow` is off so our `mouseDown` — not
+/// AppKit's automatic move — sees the event and can tell a double-click apart from a drag.
+private struct WindowControlArea: NSViewRepresentable {
+    func makeNSView(context _: Context) -> TitlebarControlView { TitlebarControlView() }
+    func updateNSView(_: TitlebarControlView, context _: Context) {}
+
+    final class TitlebarControlView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                performTitlebarDoubleClickAction()
+                return
+            }
+            // a single click that turns into a drag moves the window; a plain click returns at once.
+            window?.performDrag(with: event)
+        }
+
+        /// Mirror AppKit's native title-bar double-click by honoring the system setting at
+        /// Desktop & Dock ▸ "Double-click a window's title bar to" (`AppleActionOnDoubleClick`
+        /// in `NSGlobalDomain`): Zoom/Fill → zoom, Minimize → miniaturize, "Do Nothing" → no-op.
+        /// The key is absent until the user changes it from the macOS default (Zoom), so an
+        /// untouched system reads as `nil` here and still zooms — preserving the prior behavior.
+        /// Read live on each double-click so a setting change takes effect without an app relaunch.
+        /// "Fill" maps to `zoom` (the closest standard NSWindow action; true Fill uses the newer
+        /// window-tiling APIs). Zoom matches the green button and the `window.zoom` control command.
+        ///
+        /// A UITest env override (`AGTERM_UITEST_DOUBLECLICK_ACTION`) takes precedence so the gesture
+        /// tests are hermetic regardless of the host machine's setting; it rides the environment
+        /// because launch arguments trip the macOS 15+ no-window-at-launch bug (FB11763863, see
+        /// `ui-tests.md`). Production never sets it and falls through to the live system default.
+        private func performTitlebarDoubleClickAction() {
+            guard let window else { return }
+            let action = ProcessInfo.processInfo.environment["AGTERM_UITEST_DOUBLECLICK_ACTION"]
+                ?? UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
+            switch action {
+            case "Minimize":
+                window.performMiniaturize(nil)
+            case "None":
+                break
+            default: // "Maximize", "Fill", or unset (macOS default) → zoom
+                window.zoom(nil)
+            }
+        }
+    }
+}
+
 /// App-side bridge mapping a `WindowInfo.ID` to its live `NSWindow`. `WindowLibrary` is host-free
 /// (no AppKit), so the NSWindow handles live here. `TitleProbeView` registers/unregisters on window
 /// attach/close; `raise(_:)` brings an already-open window forward (the dedup-by-id raise path) and
@@ -1289,6 +1364,17 @@ final class WindowRegistry {
         let origin = WindowGeometry.clampOrigin(requested, windowSize: WindowGeometry.Size(size),
                                                 displayFrame: WindowGeometry.Rect(screen.frame)).cgPoint
         window.setFrameOrigin(origin)
+        return true
+    }
+
+    /// Zooms (the maximize-to-screen toggle) the on-screen window for `id` if one is live, driving the
+    /// standard `NSWindow.zoom` — the same action as the green zoom button and the double-click-header
+    /// gesture. A second call restores the prior frame. Returns false if no window is registered for `id`
+    /// (not open). The control-channel `window.zoom` path.
+    @discardableResult
+    func zoom(_ id: WindowInfo.ID) -> Bool {
+        guard let window = windows[id] else { return false }
+        window.zoom(nil)
         return true
     }
 }
@@ -1410,6 +1496,7 @@ private struct SplitRatioAccessor: NSViewRepresentable {
         /// Top strip (in points) to clip the split's divider out of; updated on a compact-toolbar toggle.
         var titlebarHeight: CGFloat = 0 { didSet { if titlebarHeight != oldValue { updateDividerClip() } } }
         nonisolated(unsafe) private var resizeObserver: NSObjectProtocol?
+        nonisolated(unsafe) private var applyObserver: NSObjectProtocol?
         nonisolated(unsafe) private var saveWorkItem: DispatchWorkItem?
         private weak var splitView: NSSplitView?
         private var dividerClipMask: CALayer?
@@ -1446,6 +1533,25 @@ private struct SplitRatioAccessor: NSViewRepresentable {
                 // `capture()`, matching the codebase's notification-closure pattern (e.g. ControlServer).
                 MainActor.assumeIsolated { self?.capture() }
             }
+            // `session.resize` stores a new fraction on the session and posts this (object-scoped to the
+            // session) to move the LIVE divider — the programmatic analogue of a user drag. Unlike the
+            // one-shot restore in `layout()`, it fires on every resize command.
+            applyObserver = NotificationCenter.default.addObserver(
+                forName: .agtermApplySplitRatio, object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyRatio() }
+            }
+        }
+
+        /// Move the live divider to the session's stored `splitRatio` (set by `session.resize` just before
+        /// it posts `.agtermApplySplitRatio`). The follow-on `didResizeSubviews` → `capture()` is a no-op:
+        /// the captured fraction equals the value we just set, so `capture()`'s near-equal guard skips it.
+        private func applyRatio() {
+            guard let split = splitView, let ratio = session.splitRatio else { return }
+            let total = split.bounds.width
+            // no real width yet (mid-relayout): re-arm the one-shot `layout()` restore so it applies the
+            // new fraction on the next pass instead of leaving the model ahead of the divider.
+            guard total > 1 else { restored = false; return }
+            split.setPosition(total * CGFloat(ratio), ofDividerAt: 0)
         }
 
         /// Mask the split's divider out of the titlebar zone — the strip ABOVE the window's titlebar boundary
@@ -1515,6 +1621,7 @@ private struct SplitRatioAccessor: NSViewRepresentable {
         deinit {
             saveWorkItem?.cancel()
             if let resizeObserver { NotificationCenter.default.removeObserver(resizeObserver) }
+            if let applyObserver { NotificationCenter.default.removeObserver(applyObserver) }
         }
     }
 }

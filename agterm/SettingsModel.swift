@@ -86,6 +86,8 @@ final class SettingsModel {
     func setCompactToolbar(_ value: Bool?) { settings.compactToolbar = value; persistAndApply() }
     func setNotificationBadgeEnabled(_ value: Bool?) { settings.notificationBadgeEnabled = value; persistAndApply() }
     func setMouseScrollMultiplier(_ value: Double?) { settings.mouseScrollMultiplier = value; persistAndApply() }
+    // ghostty key (right-click-action): persistAndApply() rewrites the conf and reloads surfaces live.
+    func setRightClickPaste(_ value: Bool?) { settings.rightClickPaste = value; persistAndApply() }
     func setInactivePaneMuteStrength(_ value: Int?) { settings.inactivePaneMuteStrength = value; persistAndApply() }
     func setSidebarBackgroundShift(_ value: Int?) { settings.sidebarBackgroundShift = value; persistAndApply() }
     // not a ghostty key, so persistAndApply()'s writeGhosttyConfig() no-ops and no surface reload fires.
@@ -306,11 +308,26 @@ final class SettingsModel {
     /// Edit-ghostty overlay close, a Key Mapping directory change, and the `config.reload` control command.
     @discardableResult
     func reloadGhosttyConfig() -> Int {
-        let count = GhosttyApp.shared.reloadConfig(surfaces: liveSurfaces())
-        library.resetSessionFontSizesAllWindows()
+        let count = reloadConfigClearingSessionZoom()
         NotificationCenter.default.post(name: .agtermAppearanceChanged, object: nil)
         if count > 0 { NotificationManager.shared.notifyConfigDiagnostics(count: count) }
         return count
+    }
+
+    /// Clears every session's per-session ⌘+/⌘− zoom BEFORE rebuilding + rebroadcasting the ghostty
+    /// config to the live surfaces, returning the rebuilt config's diagnostic count. The ORDER is
+    /// load-bearing: `reloadConfig` re-asserts each watermarked surface's overlay (`reapplyWatermarkIfNeeded`),
+    /// which re-emits `font-size` from `session.fontSize`. Clearing the override FIRST makes that re-emit
+    /// read nil — so a watermarked pane drops its zoom on screen and the snapshot persists `fontSize == nil`
+    /// in agreement, matching the documented "reload clears per-session zoom" contract (resetting AFTER would
+    /// leave the surface zoomed while the model said nil). BOTH reload callers — `reloadGhosttyConfig` and
+    /// `apply()` — funnel through here so neither can drift back to reload-then-reset.
+    @discardableResult
+    private func reloadConfigClearingSessionZoom() -> Int {
+        // open windows reset live, closed ones by rewriting their snapshot file (the shared config reset
+        // every surface to the default size, so a closed window mustn't reopen later overriding the new default).
+        library.resetSessionFontSizesAllWindows()
+        return GhosttyApp.shared.reloadConfig(surfaces: liveSurfaces())
     }
 
     /// Read `keymap.conf` and parse it into `keymap` + `keymapDiagnostics`. A MISSING file is not an
@@ -487,11 +504,7 @@ final class SettingsModel {
         // the translucent range, or a blur change, leaves the config identical — re-syncing the
         // window alone is enough and avoids hammering surface rebuilds on every slider tick.
         if writeGhosttyConfig() {
-            GhosttyApp.shared.reloadConfig(surfaces: liveSurfaces())
-            // clear per-session font overrides in EVERY window — open ones live, closed ones by
-            // rewriting their snapshot file (the shared config reset every surface to the default
-            // size, so a closed window mustn't reopen later overriding the new default).
-            library.resetSessionFontSizesAllWindows()
+            reloadConfigClearingSessionZoom()
         }
         applyWindowTranslucency()
         applyNotificationsEnabled()

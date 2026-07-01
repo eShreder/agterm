@@ -24,14 +24,15 @@ paths:
   system orange/green; NOT ghostty keys) + `mouseScrollMultiplier` (ghostty `mouse-scroll-multiplier`)
   + `inactivePaneMuteStrength` (0...10 inactive-split-pane text mute, nil = default 5,
   NOT a ghostty key) + `sidebarBackgroundShift` (0...10 sidebar lighter/darker tint relative to the terminal,
-  nil = default 5 = neutral, NOT a ghostty key).
+  nil = default 5 = neutral, NOT a ghostty key)
+  + `rightClickPaste` (ghostty `right-click-action`, nil = on).
   The three `*StatusColorHex` (`#RRGGBB`, nil = active `#DBD9E6` muted lavender-grey + system amber/green)
   color the sidebar agent-status glyph: `SettingsModel` passes the hex to `GhosttyApp.setAgentStatusColors`
   which resolves to `NSColor` (so `SettingsModel` stays AppKit-free, the `NSColor`↔hex helper is `NSColor+AgtermHex`),
   `StatusIconView` reads it when drawing, and a change rides `.agtermAppearanceChanged` → the Coordinator's
   `reapplyStatusGlyphs()` sweep (the colors are global, not per-row, so `reconcile`'s diff can't see
   them).
-  Settings → Appearance → Agent Status drives them with a Reset-to-defaults button (clears all three
+  Settings → Agent Status drives them with a Reset-to-defaults button (clears all three
   to nil), plus a **Blocked sound** picker bound to `AppSettings.blockedStatusSoundName` (nil/"None"
   = no sound, the default; else a system sound name).
   `SettingsModel.setBlockedStatusSoundName` only SAVES (not a ghostty key,
@@ -52,13 +53,22 @@ paths:
   `AppSettings.ghosttyConfigLines()` (host-free, unit-tested) emits `key = value` lines RAW — no quotes,
   because ghostty takes the whole line remainder as the value (confirmed against the bundled conf + theme
   files), so names with spaces (`3024 Night`) must not be quoted.
-  `mouseScrollMultiplier` is the ONE field always emitted: nil emits the default `mouse-scroll-multiplier = 3`
-  (a bare value applied to both the notched wheel and the trackpad) rather than being omitted,
-  so the default speed is effective rather than ghostty's per-device defaults (discrete 3 / precision
-  1) — a consequence is it overrides any `mouse-scroll-multiplier` in the user's own `~/.config/ghostty/config`.
-  The General → Scrolling stepper (1...10, default 3) maps 3 back to nil so `settings.json` stays minimal;
-  the emitted value is 3 either way.
-  The General → Panes slider (0...10, default 5) maps 5 back to nil the same way;
+  TWO fields are always emitted (every other key is omitted when unset): `mouseScrollMultiplier` — nil
+  emits the default `mouse-scroll-multiplier = 3` (a bare value applied to both the notched wheel and
+  the trackpad) rather than being omitted, so the default speed is effective rather than ghostty's per-device
+  defaults (discrete 3 / precision 1) — a consequence is it overrides any `mouse-scroll-multiplier` in
+  the user's own `~/.config/ghostty/config`; and `rightClickPaste` — nil/on emits `right-click-action = paste`,
+  off emits `right-click-action = ignore`, so the toggle OWNS the key (the settings conf loads last, so
+  it wins over a `right-click-action` in the user's own `ghostty.conf` — for agterm, which has no terminal
+  context menu, paste-or-off is the whole meaningful choice).
+  The General → Mouse scroll-speed slider (1...10, default 3) maps 3 back to nil so `settings.json` stays
+  minimal; the emitted value is 3 either way.
+  The General → Mouse right-click toggle (default-ON binding, get `?? true` / set `$0 ? nil : false`,
+  like the other default-on toggles) drives `rightClickPaste` and is a real ghostty-key setter (`SettingsModel.setRightClickPaste`
+  → `persistAndApply` rewrites the conf and reloads surfaces live); GUI-only and keep-in-sync EXEMPT (only
+  `theme.set`/`config.reload` touch settings over the socket — the right-click FORWARDING itself is unconditional
+  in `GhosttySurfaceView`, this key only decides libghostty's action).
+  The Appearance → Panes slider (0...10, default 5) maps 5 back to nil the same way;
   it drives `GhosttyApp.inactivePaneMuteStrength` (mirrored into `WindowContentView` view state on `.agtermAppearanceChanged`,
   like `compactToolbar`/`notificationBadgeEnabled`), and `ContentView.paneDim` washes the inactive split
   pane with `terminalColor` at `AppSettings.muteOpacity(strength:)` (host-free,
@@ -113,12 +123,24 @@ paths:
   `ContentView` mirrors the color into `terminalColor` view state (the quick terminal's opaque backing
   re-renders with the new color) and `TitleProbeView` re-applies the window appearance.
   Without this the chrome only refreshed when the window next re-keyed.
-  UI is the standard SwiftUI `Settings` scene (Cmd+,) with a 3-tab `TabView`:
-  **General** (the notification-banner toggle + the notification-badge toggle + a **Scrolling** section
-  with the scroll-speed stepper), **Appearance** (a **Terminal** section — font/size/theme via `NSFontManager`
-  monospaced families + the bundled `ghostty/themes` dir, `SettingsCatalog` — and a **Window** section
-  with background opacity + blur sliders + the Sidebar Tint slider), and **Key Mapping** (the config
-  directory holding `keymap.conf` + a read-only diagnostics list + a Reload button — see the Keymap section).
+  UI is the standard SwiftUI `Settings` scene (Cmd+,) with a 5-tab `TabView` (frame 480×600).
+  An explicit `TabView(selection:)` binding (`@State` default `.general`) suppresses SwiftUI's
+  `com_apple_SwiftUI_Settings_selectedTabIndex` auto-persistence, so the window always opens on General
+  instead of restoring the last-used tab.
+  **General** (a **Mouse** section with the scroll-speed slider + the right-click-pastes toggle,
+  a **Sessions** section with the restore-running-commands toggle,
+  and a **Ghostty Config** section with the inherit-global-config toggle).
+  **Appearance** (a **Terminal** section — font/size/theme via `NSFontManager` monospaced families +
+  the bundled `ghostty/themes` dir, `SettingsCatalog` — a **Window** section with the compact-toolbar
+  toggle + background opacity/blur sliders + the Sidebar Tint slider, and a **Panes** section with the
+  inactive-pane-mute slider).
+  **Notifications** (a **Notifications** section with the banner / badge / attention-indicator toggles).
+  **Agent Status** (a **Colors** section with the three glyph color pickers, a **Sound** section with
+  the blocked-sound picker, and a trailing **Reset** that clears both back to defaults).
+  **Key Mapping** (the config directory holding `keymap.conf` + a read-only diagnostics list + a Reload
+  button — see the Keymap section).
+  Captions under controls are kept to a single terse line and dropped entirely from self-explanatory
+  controls (font/theme/opacity/sidebar-tint/colors), so each tab fits without scrolling.
   The notification toggle (`AppSettings.notificationsEnabled`, nil = on) is mirrored to `NotificationManager.bannersEnabled`
   by `SettingsModel`; it gates only the OS banner, never the badge, and is NOT a ghostty config key (no
   reload).
@@ -233,6 +255,15 @@ paths:
   the shell so exit returns to a prompt).
   The captured field is consumed run-once in the factory (read-then-nil,
   like `scratchCommand`) so a later structural save can't re-fire it.
+  The SAME toggle ALSO gates the OTHER restore path: a `session.new --command` session persists its command
+  (`SessionSnapshot.initialCommand`) and re-runs it on restore via `config.command` (the shell-replacing,
+  close-on-exit path — the opposite of the foreground path's `initial_input`), because a command that
+  exec-replaces the shell is invisible to the foreground-pid capture.
+  That path is gated by the transient `Session.wasRestored` (a fresh command session always runs; a restored
+  one honors the toggle), and a live captured foreground preempts the persisted `initialCommand`.
+  Unlike `foregroundCommand`, `initialCommand` is NOT consumed — it is the durable creation identity,
+  re-emitted by every `snapshot()`, so the opt-out is per-restart (re-enabling the toggle brings the command
+  session back); it is dropped only when the command pane exits into a promoted split (`closePrimaryPane`).
   All decision logic (parse/shell-detect/denylist/quote) is host-free in `CommandRestore` (unit-tested);
   the app target owns only the C-boundary + Darwin syscall.
   ONLY a single-process command restores faithfully — a typed pipeline/compound line captures one process.
@@ -256,7 +287,7 @@ paths:
   `theme.set`/`config.reload` touch settings over the socket).
   Default-off + round-trip covered host-free in `AppSettingsTests`; the file-gating itself is app-target
   (manually/build verified, no app unit-test host).
-- **`attentionButtonEnabled` (titlebar attention bell, opt-in, General tab).**
+- **`attentionButtonEnabled` (titlebar attention bell, opt-in, Notifications tab).**
   `AppSettings.attentionButtonEnabled: Bool?` (nil = OFF, the default-off precedent like `restoreRunningCommand`/`inheritGlobalGhosttyConfig`,
   NOT `notificationBadgeEnabled`'s default-ON) gates the title-bar bell icon that reflects the window's
   `AppStore.attentionSessions` at a glance (empty → dimmed/disabled, non-empty → enabled,
@@ -266,11 +297,14 @@ paths:
   pushes `settings.attentionButtonEnabled ?? false` into the `GhosttyApp.attentionButtonEnabled` flag
   (alongside `applyCompactToolbar`/`applyNotificationBadgeEnabled`), so a flip rides `.agtermAppearanceChanged`
   and `WindowContentView` re-reads the mirror to re-render the titlebar live — exactly like `compactToolbar`/`notificationBadgeEnabled`.
-  The General ▸ Notifications `Toggle("Show attention indicator")` uses the default-OFF binding (get
+  The Notifications tab's Notifications-section `Toggle("Show attention indicator")` uses the default-OFF binding (get
   `?? false`, set `$0 ? true : nil`, mirroring `restoreRunningCommand`/`inheritGlobalGhosttyConfig`,
   NOT `notificationBadgeEnabled`).
   GUI-only and keep-in-sync EXEMPT (the bell just opens the already-controllable attention palette /
   `session.select`; only `theme.set`/`config.reload` touch settings over the socket).
   See the Notifications section for the bell's three states and the Menu/actions section for the `.attention`
   palette it opens.
+- **A Settings toggle's DESCRIPTION stays single-line short-form** — a terse hint, not a manual.
+  No detailed multi-line explanation of what the toggle does and no cross-refs to other toggles;
+  keep the minimal style (see also the flag-description convention).
 

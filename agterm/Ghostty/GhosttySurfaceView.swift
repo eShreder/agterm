@@ -135,6 +135,15 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// `nonisolated(unsafe)`: mutated only on the main actor (create/destroy), like `configCStrings`.
     nonisolated(unsafe) private var envVars: [ghostty_env_var_s] = []
 
+    /// Per-surface ghostty configs built for this surface's background watermark (`configWithOverlay`),
+    /// retained so they outlive their `ghostty_surface_update_config`. Capped at ONE: each re-apply
+    /// (`set`/`clear`/`config.reload`) frees the prior and keeps only the current, since after
+    /// `update_config` the surface no longer references the old config — so a scriptable `config.reload`
+    /// loop can't grow it. The remaining one is freed in `destroySurface`/`deinit`, when the surface (its
+    /// only consumer) is gone, so that free is safe too (unlike the app-wide config `GhosttyApp` never frees).
+    /// `nonisolated(unsafe)`: mutated only on the main actor, like `configCStrings`.
+    nonisolated(unsafe) private var ownedConfigs: [ghostty_config_t] = []
+
     /// Key-window observers (didBecomeKey/didResignKey). A surface in a background window must report an
     /// unfocused (hollow) cursor, but AppKit first responder is per-window and does NOT resign when a
     /// window merely loses key, so we watch key changes and re-push `liveFocus`. Removed on teardown.
@@ -187,6 +196,30 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// a slot going inactive mid-retry makes the loop bail. Main/split panes never auto-focus, so it's inert
     /// for them; they take focus through `TerminalView.focusIfNeeded`, which is already active-gated.
     var deckActive = true
+
+    /// Whether this surface's deck slot is on-screen (its session is selected and not hidden by a full
+    /// overlay/scratch). UNLIKE `deckActive`, this is NOT focus-gated: both panes of a visible split are
+    /// `deckVisible`. `TerminalView` sets it from the deck. Load-bearing for drag-and-drop: every session's
+    /// surface is eagerly realized, and SwiftUI's `.opacity(0)`/`.allowsHitTesting(false)` on inactive deck
+    /// panes do NOT reach AppKit's drag machinery (the NSView keeps `alphaValue == 1`, and AppKit's
+    /// drag-destination resolution does NOT consult `hitTest`), so if every surface stayed a registered
+    /// drag target a file drop would land on whichever is topmost in z-order — an INVISIBLE background
+    /// session — instead of the one under the cursor. `didSet` (un)registers the drag types to fix that.
+    var deckVisible = true {
+        didSet { updateDropRegistration() }
+    }
+
+    /// Register the file/text drag types only while this surface is the on-screen deck pane; unregister
+    /// otherwise, so an eagerly-realized background surface is not a drag target and a drop can only reach
+    /// the visible pane. Called from `deckVisible`'s didSet and once from `createSurface` (didSet does not
+    /// fire for the initializer default).
+    private func updateDropRegistration() {
+        if deckVisible {
+            registerForDraggedTypes([.fileURL, .string, .URL])
+        } else {
+            unregisterDraggedTypes()
+        }
+    }
 
     private var _markedRange = NSRange(location: NSNotFound, length: 0)
     private var _selectedRange = NSRange(location: NSNotFound, length: 0)
@@ -256,6 +289,9 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         if let surface { ghostty_surface_free(surface) }
         configCStrings.forEach { free($0) }
         envVars = []
+        // free the retained per-surface watermark configs (safe now the surface is gone — see ownedConfigs).
+        ownedConfigs.forEach { ghostty_config_free($0) }
+        ownedConfigs = []
         if let f = overlayCodeFile { try? FileManager.default.removeItem(atPath: f) }
     }
 
@@ -439,6 +475,38 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         ghostty_surface_update_config(surface, config)
     }
 
+    /// Builds this session's background-watermark config overlay (base files + `background-image*` lines +
+    /// the session's current font zoom, via `WatermarkConfig`/`WatermarkRenderer`) and pushes it to the
+    /// surface, retaining the config for teardown. A no-op when the surface has no owning session (the
+    /// overlay/scratch/quick-terminal surfaces never carry one). A nil watermark with no font override
+    /// yields the plain base config, which CLEARS a previously-applied image. The `.text` PNG is (re)rendered
+    /// here so it always matches the current string/color. Main-actor; reads the session imperatively.
+    func applyWatermarkFromSession() {
+        guard let surface, let session else { return }
+        let resolvedImagePath = WatermarkRenderer.materialize(session.backgroundWatermark, sessionID: session.id)
+        let overlay = WatermarkConfig.overlayText(watermark: session.backgroundWatermark,
+                                                  resolvedImagePath: resolvedImagePath, fontSize: session.fontSize)
+        guard let config = GhosttyApp.shared.configWithOverlay(overlay) else {
+            NSLog("watermark: per-surface config build failed for session %@", session.id.uuidString)
+            return
+        }
+        ghostty_surface_update_config(surface, config)
+        // free the PRIOR per-surface config(s) and keep only this one: after `update_config` installs the
+        // new config the surface no longer references the old, so freeing it here is safe AND caps the
+        // retain at one per surface. Without this, `config.reload` (scriptable) re-applies each watermarked
+        // surface every reload and would grow `ownedConfigs` unbounded on a reload loop.
+        ownedConfigs.forEach { ghostty_config_free($0) }
+        ownedConfigs = [config]
+    }
+
+    /// Re-assert the session's watermark after a global config reload broadcast the shared config (no
+    /// background image) to this surface via `applyConfig`. No-op when the session has no watermark (so
+    /// a plain surface isn't needlessly rebuilt). Called from `GhosttyApp.reloadConfig`.
+    func reapplyWatermarkIfNeeded() {
+        guard session?.backgroundWatermark != nil else { return }
+        applyWatermarkFromSession()
+    }
+
     func reportFontSize() {
         // Already on the main actor (the CELL_SIZE callback hops via DispatchQueue.main.async).
         // inherited_config carries the surface's live font size (post cmd +/-); a zero means
@@ -578,9 +646,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     func createSurface() {
         guard !isDestroyed else { return }
         if isHeadless { createHeadlessSurface(); return }
-        // register as a file drop target (issue #51): dropping files inserts their paths. idempotent
-        // across re-entry (createSurface re-runs when a deferred surface finally gets a backing size).
-        registerForDraggedTypes([.fileURL, .string, .URL])
+        // register as a file drop target (issue #51) only while on-screen, so a background deck surface
+        // can't intercept the drop (see updateDropRegistration). idempotent across re-entry (createSurface
+        // re-runs when a deferred surface finally gets a backing size).
+        updateDropRegistration()
         guard surface == nil, let app = GhosttyApp.shared.app else { return }
         let backingSize = convertToBacking(bounds).size
         guard backingSize.width > 0, backingSize.height > 0 else {
@@ -662,6 +731,11 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         }
         updateGhosttyFocus()
 
+        // a session carrying a background watermark (set earlier on a never-shown session, or restored from
+        // a snapshot) applies it now that the surface exists — covering deferred-size creation, the eager
+        // deck, and relaunch. No-op for the sessionless overlay/scratch/quick surfaces.
+        if session?.backgroundWatermark != nil { applyWatermarkFromSession() }
+
         // the overlay grabs first responder itself (TerminalView's once-on-attach grab misses the
         // deferred overlay surface); a bounded run-loop retry beats the SwiftUI/AppKit responder race.
         requestAutoFocus(in: window)
@@ -742,6 +816,9 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         configCStrings = []
         // the env structs only point into the freed configCStrings buffers; clear them too.
         envVars = []
+        // free the retained per-surface watermark configs — the surface (their only consumer) is gone.
+        ownedConfigs.forEach { ghostty_config_free($0) }
+        ownedConfigs = []
         // read the wrapper-captured exit status, hand it off, then delete the temp file so its lifetime
         // tracks the surface. runs on every in-process teardown (natural exit, explicit close, force-close).
         if let f = overlayCodeFile {

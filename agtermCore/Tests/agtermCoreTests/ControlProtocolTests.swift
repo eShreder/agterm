@@ -153,6 +153,32 @@ struct ControlProtocolTests {
         #expect(decoded.args?.command == "htop")
     }
 
+    @Test func sessionResizeRoundTrips() throws {
+        let cases: [ControlRequest] = [
+            ControlRequest(cmd: .sessionResize, target: "active", args: ControlArgs(ratio: 0.7)),
+            ControlRequest(cmd: .sessionResize, target: "9f3c", args: ControlArgs(ratioDelta: 0.05)),
+            ControlRequest(cmd: .sessionResize, args: ControlArgs(ratioDelta: -0.05)),
+        ]
+        for request in cases {
+            #expect(try roundTrip(request) == request)
+        }
+    }
+
+    @Test func sessionResizeRawStringMapsToCommandAndArgs() throws {
+        let raw = #"{"cmd":"session.resize","target":"active","args":{"ratio":0.7}}"#
+        let decoded = try JSONDecoder().decode(ControlRequest.self, from: Data(raw.utf8))
+        #expect(decoded.cmd == .sessionResize)
+        #expect(decoded.args?.ratio == 0.7)
+        #expect(decoded.args?.ratioDelta == nil)
+    }
+
+    @Test func sessionResizeResultRoundTripsRatio() throws {
+        let response = ControlResponse(ok: true, result: ControlResult(id: "9f3c", ratio: 0.85))
+        let decoded = try roundTrip(response)
+        #expect(decoded == response)
+        #expect(decoded.result?.ratio == 0.85)
+    }
+
     @Test func sessionFlagRawStringMapsToCommandAndMode() throws {
         let raw = #"{"cmd":"session.flag","target":"active","args":{"mode":"on"}}"#
         let decoded = try JSONDecoder().decode(ControlRequest.self, from: Data(raw.utf8))
@@ -173,6 +199,31 @@ struct ControlProtocolTests {
         #expect(decoded.cmd == .workspaceFocus)
         #expect(decoded.args?.mode == "on")
         #expect(decoded.target == "active")
+    }
+
+    @Test func sessionBackgroundRoundTrips() throws {
+        let cases: [ControlRequest] = [
+            ControlRequest(cmd: .sessionBackground, target: "active",
+                           args: ControlArgs(mode: "image", path: "/tmp/bg.png", opacity: 0.2,
+                                             fit: "cover", position: "top-left", repeats: true)),
+            ControlRequest(cmd: .sessionBackground, target: "9f3c",
+                           args: ControlArgs(text: "DRAFT", mode: "text", color: "#ff0000",
+                                             opacity: 0.15, fit: "contain", position: "center")),
+            ControlRequest(cmd: .sessionBackground, target: "active", args: ControlArgs(mode: "clear")),
+        ]
+        for request in cases {
+            #expect(try roundTrip(request) == request)
+        }
+    }
+
+    @Test func sessionBackgroundRawStringMapsToCommandAndArgs() throws {
+        let raw = ##"{"cmd":"session.background","target":"active","args":{"mode":"text","text":"DRAFT","color":"#ff0000","opacity":0.15}}"##
+        let decoded = try JSONDecoder().decode(ControlRequest.self, from: Data(raw.utf8))
+        #expect(decoded.cmd == .sessionBackground)
+        #expect(decoded.args?.mode == "text")
+        #expect(decoded.args?.text == "DRAFT")
+        #expect(decoded.args?.color == "#ff0000")
+        #expect(decoded.args?.opacity == 0.15)
     }
 
     @Test func treeSessionNodeRoundTripsWithFlagged() throws {
@@ -238,6 +289,43 @@ struct ControlProtocolTests {
         #expect(!json.contains("status"), "a nil status must be omitted from the JSON; got \(json)")
         let decoded = try JSONDecoder().decode(ControlSessionNode.self, from: Data(json.utf8))
         #expect(decoded.status == nil)
+    }
+
+    @Test func treeSessionNodeRoundTripsWithBackground() throws {
+        // the read side of session.background: the watermark spec rides the tree node so a script can query it.
+        let watermark = BackgroundWatermark(kind: .text, text: "PROD", colorHex: "#ff0000",
+                                            opacity: 0.2, fit: .cover, position: .topRight)
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false,
+                                         background: watermark)
+        let response = ControlResponse(ok: true, result: ControlResult(tree: ControlTree(
+            workspaces: [ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])])))
+        let decoded = try roundTrip(response)
+        #expect(decoded == response)
+        let node = decoded.result?.tree?.workspaces.first?.sessions.first
+        #expect(node?.background == watermark)
+        #expect(node?.background?.fit == .cover)          // the typed enum survives the wire round-trip
+        #expect(node?.background?.position == .topRight)
+    }
+
+    @Test func treeSessionNodeOmitsBackgroundWhenNil() throws {
+        // a session with no watermark — the key must be omitted, not emitted as null.
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false)
+        let json = String(data: try JSONEncoder().encode(session), encoding: .utf8) ?? ""
+        #expect(!json.contains("background"), "a nil background must be omitted from the JSON; got \(json)")
+        let decoded = try JSONDecoder().decode(ControlSessionNode.self, from: Data(json.utf8))
+        #expect(decoded.background == nil)
+    }
+
+    @Test func backgroundWatermarkFitPositionSerializeAsRawStrings() throws {
+        // the Fit/Position enums must serialize to ghostty's exact key strings (identical to the former
+        // String), so the wire + persisted JSON are unchanged by the enum migration.
+        let watermark = BackgroundWatermark(kind: .image, imagePath: "/a.png", fit: .stretch, position: .bottomCenter)
+        let json = String(data: try JSONEncoder().encode(watermark), encoding: .utf8) ?? ""
+        #expect(json.contains("\"fit\":\"stretch\""))
+        #expect(json.contains("\"position\":\"bottom-center\""))
+        // a decoded-back value equals the original (rawValue mapping is lossless).
+        let decoded = try JSONDecoder().decode(BackgroundWatermark.self, from: Data(json.utf8))
+        #expect(decoded == watermark)
     }
 
     @Test func restoreClearRoundTrips() throws {
@@ -350,6 +438,7 @@ struct ControlProtocolTests {
             ControlRequest(cmd: .windowClose, target: "9f3c"),
             ControlRequest(cmd: .windowRename, target: "active", args: ControlArgs(name: "renamed")),
             ControlRequest(cmd: .windowDelete, target: "9f3c"),
+            ControlRequest(cmd: .windowZoom, target: "9f3c"),
         ]
         for request in cases {
             #expect(try roundTrip(request) == request)

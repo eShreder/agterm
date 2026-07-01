@@ -85,6 +85,17 @@ surface ownership, and the C-boundary concurrency contract before changing the b
 
 The app must build, `swift test` must stay green, and `make lint` must pass after every change.
 
+- **Manage file sizes for real — target under 1000 lines for source files (tests may run 2–3×).**
+  In OUR OWN work: when you touch a long file, PROPOSE splitting/relocating it toward that rather than
+  growing it further — but ALWAYS ask the user first, never restructure a file unprompted; and don't
+  reflexively bump the grandfathered swiftlint `file_length`/`type_body_length` limits to fit new code.
+  For a CONTRIBUTOR's PR: do NOT force this — a contributor shouldn't have to refactor a pre-existing long
+  file to land their change; NOTIFY that a file is getting long and SUGGEST keeping it under 1000, but
+  never make them address the line count or block the PR on it.
+  And when REVIEWING a contributor's PR, never suggest the contributor RAISE a `file_length`/`type_body_length`
+  (or any lint) limit to fit their change — bumping a grandfathered limit is a maintainer decision,
+  so at most note the file is getting long, never offer the limit bump as the fix.
+
 - **Working in a git WORKTREE: SYMLINK the prebuilt artifacts, don't re-run setup.** A fresh `git worktree`
   does NOT contain the gitignored `GhosttyKit.xcframework`, `agterm/Resources/ghostty`,
   or `agterm/Resources/terminfo` (they're build outputs, never committed).
@@ -286,7 +297,7 @@ This only changes raw-text line breaks — the rendered markdown is identical �
   `window.*` control.
   Triggers on `WindowLibrary`/`WindowGeometry`/`QuitPrompt`, `QuickTerminal.swift`,
   and the multi-window/quick-terminal UI tests.
-- `control-api.md` — the full 44-command control catalog, the three protocol layers,
+- `control-api.md` — the full 49-command control catalog, the three protocol layers,
   addressing, and the CLI/hooks/skill installers.
   Triggers on `ControlServer.swift`, `ControlProtocol`/`ControlResolve`,
   `agtermctlKit`/`agtermctl`, the three installers + their host-free `*Install` logic,

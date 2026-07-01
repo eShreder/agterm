@@ -449,12 +449,17 @@ final class ControlServer {
                                   command: request.args?.command)
         case .sessionFocus:
             return focusSessionPane(request.target, window: request.args?.window, pane: request.args?.pane)
+        case .sessionResize:
+            return resizeSplit(request.target, window: request.args?.window,
+                               ratio: request.args?.ratio, delta: request.args?.ratioDelta)
         case .sessionStatus:
             return setSessionStatus(request.target, window: request.args?.window,
                                     update: StatusUpdate(status: request.args?.status, blink: request.args?.blink,
                                                          autoReset: request.args?.autoReset, sound: request.args?.sound))
         case .sessionFlag:
             return flagSession(request.target, window: request.args?.window, mode: request.args?.mode)
+        case .sessionBackground:
+            return setBackground(request.target, request.args)
         case .sessionCopy:
             return copySelection(request.target, window: request.args?.window)
         case .sessionSearch:
@@ -541,6 +546,8 @@ final class ControlServer {
             return windowResize(request.target, width: request.args?.width, height: request.args?.height)
         case .windowMove:
             return windowMove(request.target, x: request.args?.x, y: request.args?.y, display: request.args?.display)
+        case .windowZoom:
+            return windowZoom(request.target)
         case .keymapReload:
             return reloadKeymap()
         case .configReload:
@@ -678,6 +685,38 @@ final class ControlServer {
             }
             actions.setSplitFocus(toSplit, of: session)
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Resize a split session's divider (control-native: no GUI/menu equivalent — the GUI resizes by
+    /// dragging the divider). `ratio` is an absolute left-pane fraction; `delta` is a signed relative nudge
+    /// (positive grows the left pane) applied to the session's current fraction (0.5 when never moved).
+    /// Exactly one must be set. The clamped fraction is stored + persisted via `AppStore.applySplitRatio`,
+    /// then `.agtermApplySplitRatio` pokes the session's `SplitProbeView` to move the live divider (a no-op
+    /// when the split is hidden — the stored value applies on next show). Errors when the session has no
+    /// split, mirroring `session.focus`. Echoes the applied (clamped) fraction in `result.ratio`.
+    private func resizeSplit(_ target: String?, window: String?, ratio: Double?, delta: Double?) -> ControlResponse {
+        switch (ratio, delta) {
+        case (nil, nil):
+            return ControlResponse(ok: false, error: "session.resize requires --split-ratio, --grow-left, or --grow-right")
+        case (.some, .some):
+            return ControlResponse(ok: false, error: "session.resize: --split-ratio is mutually exclusive with --grow-left/--grow-right")
+        default:
+            break
+        }
+        return resolveSession(target, window: window) { store, id in
+            guard let session = store.session(withID: id) else {
+                return ControlResponse(ok: false, error: "no such session: \(target ?? "active")")
+            }
+            guard session.hasSplit else {
+                return ControlResponse(ok: false, error: "session has no split")
+            }
+            let requested = ratio ?? ((session.splitRatio ?? AppStore.splitRatioDefault) + (delta ?? 0))
+            guard let applied = store.applySplitRatio(requested, forSession: id) else {
+                return ControlResponse(ok: false, error: "no such session: \(target ?? "active")")
+            }
+            NotificationCenter.default.post(name: .agtermApplySplitRatio, object: session)
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, ratio: applied))
         }
     }
 
@@ -958,6 +997,90 @@ final class ControlServer {
         }
     }
 
+    /// Set or clear a session's background watermark (`session.background`, mode `image|text|clear`):
+    /// validate the inputs (shared `WatermarkConfig` enum checks; image format + existence), build the
+    /// `BackgroundWatermark` spec (nil for `clear`), persist it on the session (`AppStore`, so it rides
+    /// `SessionSnapshot`), then apply it to the session's realized surface(s). A never-shown session keeps
+    /// the spec and applies it itself when its surface is created. Returns the session id.
+    private func setBackground(_ target: String?, _ args: ControlArgs?) -> ControlResponse {
+        // the args bag IS the option struct — unpack the watermark fields once so the arm stays a small
+        // fixed-arity signature (swiftlint function_parameter_count) rather than a 10-parameter dispatch.
+        let window = args?.window, mode = args?.mode, path = args?.path, text = args?.text
+        let color = args?.color, opacity = args?.opacity, fit = args?.fit
+        let position = args?.position, repeats = args?.repeats
+        if let fit, !WatermarkConfig.isValidFit(fit) {
+            return ControlResponse(ok: false, error: "invalid fit: \(fit) (contain|cover|stretch|none)")
+        }
+        if let position, !WatermarkConfig.isValidPosition(position) {
+            return ControlResponse(ok: false, error: "invalid position: \(position)")
+        }
+        if let opacity, !WatermarkConfig.isValidOpacity(opacity) {
+            return ControlResponse(ok: false, error: "invalid opacity: \(opacity) (0.0-1.0)")
+        }
+        let watermark: BackgroundWatermark?
+        switch mode {
+        case "image":
+            guard let path, !path.isEmpty else {
+                return ControlResponse(ok: false, error: "session.background image requires a path")
+            }
+            guard WatermarkConfig.isValidImagePath(path) else {
+                return ControlResponse(ok: false, error: "image path must not contain control characters")
+            }
+            guard WatermarkRenderer.isSupportedImage(path) else {
+                return ControlResponse(ok: false, error: "unsupported image (PNG or JPEG only): \(path)")
+            }
+            guard FileManager.default.fileExists(atPath: path) else {
+                return ControlResponse(ok: false, error: "no such image file: \(path)")
+            }
+            watermark = BackgroundWatermark(kind: .image, imagePath: path, opacity: opacity,
+                                            fit: fit.flatMap(BackgroundWatermark.Fit.init(rawValue:)),
+                                            position: position.flatMap(BackgroundWatermark.Position.init(rawValue:)),
+                                            repeats: repeats)
+        case "text":
+            guard let text, !text.isEmpty else {
+                return ControlResponse(ok: false, error: "session.background text requires text")
+            }
+            guard text.count <= WatermarkConfig.maxTextLength else {
+                return ControlResponse(ok: false,
+                                       error: "session.background text too long (max \(WatermarkConfig.maxTextLength) characters)")
+            }
+            if let color, !WatermarkConfig.isValidColorHex(color) {
+                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
+            }
+            watermark = BackgroundWatermark(kind: .text, text: text, colorHex: color,
+                                            opacity: opacity,
+                                            fit: fit.flatMap(BackgroundWatermark.Fit.init(rawValue:)),
+                                            position: position.flatMap(BackgroundWatermark.Position.init(rawValue:)))
+        case "clear", .none:
+            watermark = nil
+        default:
+            return ControlResponse(ok: false, error: "invalid background mode: \(mode ?? "") (image|text|clear)")
+        }
+        return resolveSession(target, window: window) { store, id in
+            guard let session = store.session(withID: id) else {
+                return ControlResponse(ok: false, error: "no such session")
+            }
+            // gate on a real change: applyWatermark RETAINS a per-surface config freed only on teardown, so
+            // re-applying an unchanged spec (a scripted set-loop) would leak owned configs. The store no-ops
+            // its own write the same way.
+            guard store.setBackgroundWatermark(watermark, forSession: id) else {
+                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+            }
+            // clearing a `.text` watermark drops its rendered PNG so the state dir doesn't accumulate.
+            if watermark == nil { WatermarkStorage.removeRenderedText(sessionID: id) }
+            applyWatermark(to: session)
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Apply a session's current watermark spec to its realized main + split surfaces. A never-realized
+    /// surface (nil) is skipped — it applies the spec itself on creation (`GhosttySurfaceView.createSurface`).
+    private func applyWatermark(to session: Session) {
+        for surface in [session.surface, session.splitSurface] {
+            (surface as? GhosttySurfaceView)?.applyWatermarkFromSession()
+        }
+    }
+
     /// Drive in-terminal search on the session `id`, mirroring the GUI bar and the
     /// `session.type`/floating-overlay arms. On the `close` path it drives the session's pinned
     /// `searchSurface` WITHOUT selecting (so closing a background session's bar never yanks the user's
@@ -1107,7 +1230,8 @@ final class ControlServer {
                                           active: session.id == activeID,
                                           split: session.isSplit, overlay: session.overlayActive,
                                           scratch: session.scratchActive, flagged: session.flagged,
-                                          foreground: fg, splitForeground: splitFg, status: status)
+                                          foreground: fg, splitForeground: splitFg, status: status,
+                                          background: session.backgroundWatermark)
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
                                         active: workspace.id == activeWorkspaceID, sessions: sessions)
@@ -1358,6 +1482,18 @@ final class ControlServer {
         }
         return resolveWindowID(target) { id in
             guard WindowRegistry.shared.move(id, x: x, y: y, display: display) else {
+                return ControlResponse(ok: false, error: "window not open — window.select it first")
+            }
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Resolve a window id and zoom (maximize-to-screen toggle) its on-screen window. The window must be
+    /// open; a closed window errors. The control half of the double-click-header gesture / the green zoom
+    /// button — drives the same `NSWindow.zoom` as `WindowRegistry.zoom`.
+    private func windowZoom(_ target: String?) -> ControlResponse {
+        return resolveWindowID(target) { id in
+            guard WindowRegistry.shared.zoom(id) else {
                 return ControlResponse(ok: false, error: "window not open — window.select it first")
             }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))

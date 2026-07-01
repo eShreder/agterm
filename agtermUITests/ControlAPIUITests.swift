@@ -28,6 +28,12 @@ final class ControlAPIUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["AGTERM_STATE_DIR"] = stateDir.path
         app.launchEnvironment["AGTERM_CONTROL_SOCKET"] = socketPath
+        // Pin the title-bar double-click action so the header gesture tests are hermetic regardless of
+        // the host's Desktop & Dock setting (the app honors this env override in
+        // performTitlebarDoubleClickAction; launch args can't carry it — FB11763863). Most tests never
+        // double-click, so the value is irrelevant to them; the no-op-case test opts into "None".
+        app.launchEnvironment["AGTERM_UITEST_DOUBLECLICK_ACTION"] =
+            name.contains("testDoubleClickHeaderHonorsNoneSetting") ? "None" : "Maximize"
         app.launchForUITest()
         // the seeded session row proves the window (and thus the control server's scene .task) is up.
         XCTAssertTrue(app.staticTexts["session-row"].waitForExistence(timeout: 30), "seeded session should exist")
@@ -168,6 +174,54 @@ final class ControlAPIUITests: XCTestCase {
     func testRestoreClearSucceeds() throws {
         let resp = try sendCommand(#"{"cmd":"restore.clear"}"#)
         XCTAssertEqual(resp["ok"] as? Bool, true, "restore.clear should succeed: \(resp)")
+    }
+
+    // session.background sets a text watermark and clears it; bad input (missing image, invalid fit) is
+    // rejected and the server stays alive. The actual pixels are not AX-observable (Metal surface), so this
+    // covers the control round-trip + validation, like the other surface-state commands.
+    func testSessionBackgroundSetClearAndValidation() throws {
+        let sid = try activeSessionID()
+
+        let text = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"text","text":"STAGING","opacity":0.2}}"#)
+        XCTAssertEqual(text["ok"] as? Bool, true, "session.background text should succeed: \(text)")
+
+        // read-back: the watermark spec now rides the session's tree node (set/clear/query symmetry).
+        let afterSet = try sendCommand(#"{"cmd":"tree"}"#)
+        let setNode = try XCTUnwrap(sessionNode(afterSet, id: sid), "the session should appear in the tree")
+        let bg = try XCTUnwrap(setNode["background"] as? [String: Any], "tree should expose the set watermark")
+        XCTAssertEqual(bg["kind"] as? String, "text", "the watermark kind should read back")
+        XCTAssertEqual(bg["text"] as? String, "STAGING", "the watermark text should read back")
+
+        let missing = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"image","path":"/no/such.png"}}"#)
+        XCTAssertEqual(missing["ok"] as? Bool, false, "a missing image file should be rejected")
+
+        let badFit = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"image","path":"/no/such.png","fit":"fill"}}"#)
+        XCTAssertEqual(badFit["ok"] as? Bool, false, "an invalid fit should be rejected")
+
+        // config-injection vector: a newline in the image path would smuggle an extra ghostty key into the
+        // per-surface overlay. The control-char guard runs BEFORE the format/existence checks, so its own
+        // error proves it (not fileExists) did the rejecting.
+        let injection = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"image","path":"x.png\nclipboard-read = allow\ny.png"}}"#)
+        XCTAssertEqual(injection["ok"] as? Bool, false, "an image path with a control char must be rejected")
+        XCTAssertEqual(injection["error"] as? String, "image path must not contain control characters",
+                       "the control-char guard, not the fileExists check, should reject it")
+
+        let badOpacity = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"text","text":"X","opacity":5}}"#)
+        XCTAssertEqual(badOpacity["ok"] as? Bool, false, "an out-of-range opacity should be rejected")
+
+        // an over-long text must be rejected at the boundary so the renderer never attempts a huge bitmap.
+        let longText = String(repeating: "A", count: 5000)
+        let tooLong = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"text","text":"\#(longText)"}}"#)
+        XCTAssertEqual(tooLong["ok"] as? Bool, false, "an over-long watermark text should be rejected")
+
+        let cleared = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"clear"}}"#)
+        XCTAssertEqual(cleared["ok"] as? Bool, true, "session.background clear should succeed: \(cleared)")
+
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        XCTAssertEqual(tree["ok"] as? Bool, true, "the server should stay alive after background commands")
+        // read-back after clear: the background key is omitted from the node.
+        let clearedNode = try XCTUnwrap(sessionNode(tree, id: sid), "the session should still appear in the tree")
+        XCTAssertNil(clearedNode["background"], "a cleared watermark should be absent from the tree node")
     }
 
     // a malformed JSON line returns ok:false with an error, and the server stays alive: a
@@ -1158,6 +1212,52 @@ final class ControlAPIUITests: XCTestCase {
         XCTAssertTrue((bad["error"] as? String ?? "").contains("invalid pane"), "should report invalid pane: \(bad)")
     }
 
+    // session.resize errors on a non-split session, sets an absolute fraction (clamped) and a relative
+    // nudge on a split, persists it to workspaces.json, and rejects a request carrying no fraction.
+    func testSessionResizeSplitDivider() throws {
+        let notSplit = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratio":0.7}}"#)
+        XCTAssertEqual(notSplit["ok"] as? Bool, false, "resize on a non-split session should fail: \(notSplit)")
+        XCTAssertTrue((notSplit["error"] as? String ?? "").contains("no split"), "should report no split: \(notSplit)")
+
+        let split = try sendCommand(#"{"cmd":"session.split","target":"active","args":{"mode":"on"}}"#)
+        XCTAssertEqual(split["ok"] as? Bool, true, "split on should succeed: \(split)")
+        XCTAssertTrue(pollActiveSessionSplit(true, timeout: 10), "the active session should report split:true")
+
+        // relative nudge from the nil base (0.5 default) before any absolute set: grow-left 0.1 -> 0.6.
+        let fromDefault = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratioDelta":0.1}}"#)
+        XCTAssertEqual(fromDefault["ok"] as? Bool, true, "nudge from default should succeed: \(fromDefault)")
+        XCTAssertEqual((fromDefault["result"] as? [String: Any])?["ratio"] as? Double ?? -1, 0.6, accuracy: 0.0001,
+                       "0.5 default + 0.1 = 0.6: \(fromDefault)")
+
+        // server rejects both fraction forms at once — the CLI's validate() blocks this, but a raw client can send it.
+        let both = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratio":0.7,"ratioDelta":0.1}}"#)
+        XCTAssertEqual(both["ok"] as? Bool, false, "both ratio and delta should fail: \(both)")
+        XCTAssertTrue((both["error"] as? String ?? "").contains("mutually exclusive"), "should report mutual exclusion: \(both)")
+
+        // absolute fraction: echoed in result.ratio and persisted to the snapshot.
+        let abs = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratio":0.7}}"#)
+        XCTAssertEqual(abs["ok"] as? Bool, true, "absolute resize should succeed: \(abs)")
+        XCTAssertEqual((abs["result"] as? [String: Any])?["ratio"] as? Double ?? -1, 0.7, accuracy: 0.0001,
+                       "should echo the applied ratio: \(abs)")
+        XCTAssertTrue(pollSplitRatio(0.7, timeout: 10), "0.7 should land in workspaces.json")
+
+        // out-of-range absolute clamps to the cap (0.95).
+        let clamped = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratio":2.0}}"#)
+        XCTAssertEqual(clamped["ok"] as? Bool, true, "clamped resize should succeed: \(clamped)")
+        XCTAssertEqual((clamped["result"] as? [String: Any])?["ratio"] as? Double ?? -1, 0.95, accuracy: 0.0001,
+                       "2.0 should clamp to 0.95: \(clamped)")
+
+        // relative nudge: grow-right 0.1 (a negative delta) from 0.95 lands at 0.85.
+        let nudged = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{"ratioDelta":-0.1}}"#)
+        XCTAssertEqual(nudged["ok"] as? Bool, true, "relative resize should succeed: \(nudged)")
+        XCTAssertEqual((nudged["result"] as? [String: Any])?["ratio"] as? Double ?? -1, 0.85, accuracy: 0.0001,
+                       "0.95 - 0.1 = 0.85: \(nudged)")
+
+        // neither a ratio nor a delta is a usage error.
+        let empty = try sendCommand(#"{"cmd":"session.resize","target":"active","args":{}}"#)
+        XCTAssertEqual(empty["ok"] as? Bool, false, "resize with no fraction should fail: \(empty)")
+    }
+
     // session.status sets a session's agent indicator: a valid state returns ok + the resolved id, an
     // unknown state returns the literal `invalid status` error, and an unknown target is not-found.
     func testSessionStatusSetsIndicator() throws {
@@ -1748,6 +1848,158 @@ final class ControlAPIUITests: XCTestCase {
         XCTFail("window did not move right+down: first=\(first) now=\(window.frame.origin)")
     }
 
+    // window.zoom toggles the active window between its normal frame and a maximized (fill-screen) frame —
+    // the control half of the double-click-header gesture. From a known small frame the first zoom clearly
+    // enlarges; a second zoom restores it toward that frame.
+    func testWindowZoom() throws {
+        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session")
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "window should exist")
+        // start from a known un-maximized size so the first zoom unambiguously grows the window.
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.resize","args":{"width":800,"height":600}}"#)["ok"] as? Bool, true)
+        var deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !(abs(window.frame.size.width - 800) < 8 && abs(window.frame.size.height - 600) < 8) {
+            usleep(150_000)
+        }
+        let normal = window.frame.size
+        XCTAssertEqual(normal.width, 800, accuracy: 8, "window should settle near 800 wide before zoom, got \(normal)")
+
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.zoom"}"#)["ok"] as? Bool, true)
+        deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let s = window.frame.size
+            if s.width > normal.width + 50 || s.height > normal.height + 50 { break }
+            usleep(150_000)
+        }
+        XCTAssertTrue(window.frame.size.width > normal.width + 50 || window.frame.size.height > normal.height + 50,
+                      "window should grow after window.zoom: normal=\(normal) now=\(window.frame.size)")
+
+        // a second zoom restores the window toward its previous (normal) frame.
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.zoom"}"#)["ok"] as? Bool, true)
+        deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let s = window.frame.size
+            if abs(s.width - normal.width) < 40, abs(s.height - normal.height) < 40 { break }
+            usleep(150_000)
+        }
+        XCTAssertEqual(window.frame.size.width, normal.width, accuracy: 40,
+                       "window should restore toward \(normal) after a second window.zoom, got \(window.frame.size)")
+    }
+
+    // A point 14pt below the top edge, horizontally centred: clears the top resize strip, lands inside the
+    // titlebar band (compact 30 / tall 48), and sits in the empty header (a Spacer) — clear of the traffic
+    // lights on the left and the toolbar buttons on the right, so the click falls through the decorative
+    // regions' `.allowsHitTesting(false)` to the `WindowControlArea` layer behind the custom header.
+    // Re-resolved at each interaction, so it stays in the header even after a zoom grows the window.
+    private func emptyHeaderPoint(_ window: XCUIElement) -> XCUICoordinate {
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 14))
+    }
+
+    // The double-click-header GESTURE (the actual mouse event, not the window.zoom control command) must
+    // zoom the window. Mirrors testWindowZoom's settle logic but drives the real cursor: resize to a known
+    // small frame, double-click the empty header centre, assert the window grows, then double-click again
+    // and assert it restores.
+    func testDoubleClickHeaderZoomsAndRestores() throws {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "window should exist")
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.resize","args":{"width":800,"height":600}}"#)["ok"] as? Bool, true)
+        var deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !(abs(window.frame.size.width - 800) < 8 && abs(window.frame.size.height - 600) < 8) {
+            usleep(150_000)
+        }
+        let normal = window.frame.size
+        XCTAssertEqual(normal.width, 800, accuracy: 8, "window should settle near 800 wide before the gesture, got \(normal)")
+
+        emptyHeaderPoint(window).doubleClick()
+        deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let s = window.frame.size
+            if s.width > normal.width + 50 || s.height > normal.height + 50 { break }
+            usleep(150_000)
+        }
+        XCTAssertTrue(window.frame.size.width > normal.width + 50 || window.frame.size.height > normal.height + 50,
+                      "double-clicking the header should zoom (grow) the window: normal=\(normal) now=\(window.frame.size)")
+
+        emptyHeaderPoint(window).doubleClick()
+        deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let s = window.frame.size
+            if abs(s.width - normal.width) < 40, abs(s.height - normal.height) < 40 { break }
+            usleep(150_000)
+        }
+        XCTAssertEqual(window.frame.size.width, normal.width, accuracy: 40,
+                       "a second header double-click should restore the window toward \(normal), got \(window.frame.size)")
+    }
+
+    // Locks in that the gesture HONORS the system setting rather than hardcoding zoom: pinned to "None"
+    // (Desktop & Dock ▸ "Do Nothing") via setUp's env override, a header double-click must be a no-op —
+    // the window's frame must not change. The complement of testDoubleClickHeaderZoomsAndRestores.
+    func testDoubleClickHeaderHonorsNoneSetting() throws {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "window should exist")
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.resize","args":{"width":800,"height":600}}"#)["ok"] as? Bool, true)
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !(abs(window.frame.size.width - 800) < 8 && abs(window.frame.size.height - 600) < 8) {
+            usleep(150_000)
+        }
+        let normal = window.frame.size
+        XCTAssertEqual(normal.width, 800, accuracy: 8, "window should settle near 800 wide before the gesture, got \(normal)")
+
+        emptyHeaderPoint(window).doubleClick()
+        // give any (erroneous) zoom time to land, then assert the frame never changed.
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        XCTAssertEqual(window.frame.size.width, normal.width, accuracy: 8,
+                       "with 'None' set, a header double-click must not zoom (width): normal=\(normal) now=\(window.frame.size)")
+        XCTAssertEqual(window.frame.size.height, normal.height, accuracy: 8,
+                       "with 'None' set, a header double-click must not zoom (height): normal=\(normal) now=\(window.frame.size)")
+    }
+
+    // The `WindowControlArea` drag/zoom layer sits BEHIND the header; the toolbar buttons render in front
+    // and must keep their own clicks. A double-click on the empty header must zoom (not reach a button);
+    // a click on quick-terminal-toggle must still open the quick terminal cover despite the layer behind.
+    func testHeaderButtonsStillReceiveClicksOverControlArea() throws {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "window should exist")
+        let cover = app.descendants(matching: .any).matching(identifier: "quick-terminal").firstMatch
+
+        // double-clicking the empty header zooms the window; it must NOT open the quick terminal.
+        emptyHeaderPoint(window).doubleClick()
+        XCTAssertFalse(cover.waitForExistence(timeout: 2), "double-clicking the header must not open the quick terminal")
+
+        // the button itself still takes its click even though the control-area layer is behind the header.
+        let button = app.buttons["quick-terminal-toggle"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "quick-terminal toolbar button should exist")
+        button.click()
+        XCTAssertTrue(cover.waitForExistence(timeout: 5), "clicking quick-terminal-toggle should open the quick terminal cover")
+    }
+
+    // A single-click-drag anywhere on the full custom header moves the window (performDrag), not just the
+    // native top band. Resize + position to a known on-screen frame so the drag stays on screen and the
+    // delta is unambiguous, record the origin, drag the empty header, and assert the window's origin moved.
+    func testDragHeaderMovesWindow() throws {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "window should exist")
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.resize","args":{"width":800,"height":600}}"#)["ok"] as? Bool, true)
+        XCTAssertEqual(try sendCommand(#"{"cmd":"window.move","args":{"x":140,"y":140}}"#)["ok"] as? Bool, true)
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, abs(window.frame.size.width - 800) > 8 { usleep(150_000) }
+        let origin = window.frame.origin
+
+        let from = emptyHeaderPoint(window)
+        let to = from.withOffset(CGVector(dx: 90, dy: 70))
+        from.click(forDuration: 0.3, thenDragTo: to, withVelocity: 180, thenHoldForDuration: 0.25)
+
+        let settle = Date().addingTimeInterval(5)
+        while Date() < settle {
+            let o = window.frame.origin
+            if abs(o.x - origin.x) > 20 || abs(o.y - origin.y) > 20 { break }
+            usleep(150_000)
+        }
+        let moved = window.frame.origin
+        XCTAssertTrue(abs(moved.x - origin.x) > 20 || abs(moved.y - origin.y) > 20,
+                      "dragging the header should move the window: origin=\(origin) now=\(moved)")
+    }
+
     // window.close marks the window closed, after which a session command targeting it returns the
     // "window not open" error. (--window routing into the second window is exercised first to prove
     // the round-trip, then the close flips it to the error path.)
@@ -2076,7 +2328,7 @@ final class ControlAPIUITests: XCTestCase {
     /// click), mirroring SettingsUITests' robust `settingsControl`.
     private func toggleNotificationBadges() {
         let toggle = app.descendants(matching: .any).matching(identifier: "settings-notification-badges").firstMatch
-        let tabButton = app.buttons["General"].firstMatch
+        let tabButton = app.buttons["Notifications"].firstMatch
         let deadline = Date().addingTimeInterval(12)
         while Date() < deadline {
             if toggle.exists, toggle.isHittable { toggle.click(); return }
@@ -2293,6 +2545,16 @@ final class ControlAPIUITests: XCTestCase {
             guard let workspaces = obj["workspaces"] as? [[String: Any]],
                   let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
             return sessions.first?["customName"] as? String
+        }
+    }
+
+    /// Polls the hermetic snapshot file until the (single seeded workspace's) first session's `splitRatio`
+    /// equals `expected` — the persisted side effect of `session.resize`.
+    private func pollSplitRatio(_ expected: Double, timeout: TimeInterval) -> Bool {
+        stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
+            guard let workspaces = obj["workspaces"] as? [[String: Any]],
+                  let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
+            return sessions.first?["splitRatio"] as? Double
         }
     }
 

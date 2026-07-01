@@ -456,6 +456,30 @@ struct AppStoreTests {
         #expect(split.teardownCount == 1)
     }
 
+    @Test func clampSplitRatioBoundsValue() {
+        #expect(AppStore.clampSplitRatio(0.7) == 0.7)
+        #expect(AppStore.clampSplitRatio(2.0) == AppStore.splitRatioMax)   // above the cap
+        #expect(AppStore.clampSplitRatio(-1.0) == AppStore.splitRatioMin)  // below the floor
+        #expect(AppStore.clampSplitRatio(AppStore.splitRatioMin) == AppStore.splitRatioMin)
+        #expect(AppStore.clampSplitRatio(AppStore.splitRatioMax) == AppStore.splitRatioMax)
+    }
+
+    @Test func applySplitRatioClampsSetsAndReturns() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        #expect(store.applySplitRatio(0.7, forSession: session.id) == 0.7)
+        #expect(session.splitRatio == 0.7)
+        // out-of-range clamps to the cap, on both the return and the stored value.
+        #expect(store.applySplitRatio(2.0, forSession: session.id) == AppStore.splitRatioMax)
+        #expect(session.splitRatio == AppStore.splitRatioMax)
+    }
+
+    @Test func applySplitRatioUnknownSessionReturnsNil() {
+        let store = Self.makeStore()
+        #expect(store.applySplitRatio(0.5, forSession: UUID()) == nil)
+    }
+
     @Test func closePrimaryPaneWithSplitKeepsSessionAndPromotesSurvivor() {
         let store = Self.makeStore()
         let ws = store.addWorkspace(name: "work")
@@ -466,6 +490,7 @@ struct AppStoreTests {
         session.hasSplit = true
         session.splitCwd = "/var/log"
         session.splitRatio = 0.3
+        session.initialCommand = "ssh host" // a --command primary whose command has now exited
         store.closePrimaryPane(session.id)
         #expect(store.session(withID: session.id) != nil) // session survives
         #expect(primary.teardownCount == 1)               // the dead primary is torn down
@@ -477,6 +502,7 @@ struct AppStoreTests {
         #expect(session.splitFocused == true)             // the maximized survivor is shown
         #expect(session.splitRatio == nil)                // promoted to single, so a later split opens even
         #expect(session.currentCwd == "/var/log")         // the survivor's cwd is promoted
+        #expect(session.initialCommand == nil)            // the command pane is gone; a restart must NOT resurrect it
     }
 
     @Test func closePrimaryPaneWithoutSplitClosesSession() {
@@ -624,7 +650,25 @@ struct AppStoreTests {
         let snap = try JSONDecoder().decode(SessionSnapshot.self, from: Data(json.utf8))
         #expect(snap.foregroundCommand == nil)
         #expect(snap.splitForegroundCommand == nil)
+        #expect(snap.initialCommand == nil)
         #expect(snap.cwd == "/tmp")
+    }
+
+    @Test func initialCommandRoundTripsThroughSnapshot() {
+        // a command session (e.g. `--command ssh …`) persists its creation command so it re-runs on
+        // restore instead of coming back a plain shell.
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.initialCommand = "ssh user@host -t 'ssh inner'"
+        #expect(session.wasRestored == false) // a fresh session is not marked restored
+        let snap = store.snapshot()
+        #expect(snap.workspaces[0].sessions[0].initialCommand == "ssh user@host -t 'ssh inner'")
+        let restored = Self.makeStore()
+        restored.restore(from: snap)
+        let r = restored.workspaces[0].sessions[0]
+        #expect(r.initialCommand == "ssh user@host -t 'ssh inner'")
+        #expect(r.wasRestored == true) // restore marks the session, so the surface factory can gate its re-run
     }
 
     @Test func sidebarWidthAndVisibilityRoundTripThroughSnapshot() {
@@ -2030,6 +2074,21 @@ struct AppStoreTests {
         _ = store.addSession(toWorkspace: ws.id, cwd: "/b")
         // no statuses set: every session is idle, so the attention list is empty
         #expect(store.attentionSessions.isEmpty)
+    }
+
+    @Test func setBackgroundWatermarkReportsWhetherChanged() {
+        // the change-gate the control server uses to skip a redundant per-surface config apply (which
+        // retains an owned config freed only at teardown) on a scripted set-loop.
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "w")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/tmp")!
+        let mark = BackgroundWatermark(kind: .text, text: "PROD")
+
+        #expect(store.setBackgroundWatermark(mark, forSession: session.id))       // first set changes
+        #expect(!store.setBackgroundWatermark(mark, forSession: session.id))      // identical re-set: no change
+        #expect(store.setBackgroundWatermark(nil, forSession: session.id))        // clear changes
+        #expect(!store.setBackgroundWatermark(nil, forSession: session.id))       // clear again: no change
+        #expect(!store.setBackgroundWatermark(mark, forSession: UUID()))          // unknown id: no change
     }
 }
 

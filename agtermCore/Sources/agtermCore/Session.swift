@@ -98,12 +98,28 @@ public final class Session: Identifiable {
     /// it is read imperatively at surface creation and captured by `snapshot()`.
     @ObservationIgnored public var fontSize: Double?
 
+    /// The session's background watermark (an image or rasterized text composited behind the terminal),
+    /// or nil for none. The app target applies it to the session's surface(s) via a per-surface ghostty
+    /// config overlay (see `WatermarkConfig`) at creation, on change, and after a global config reload.
+    /// `@ObservationIgnored` like `fontSize`: nothing in SwiftUI reacts — it is read imperatively when a
+    /// surface is (re)configured and captured by `snapshot()`, so it survives a relaunch (a `.text`
+    /// watermark re-renders its PNG on restore).
+    @ObservationIgnored public var backgroundWatermark: BackgroundWatermark?
+
     /// A command to run as the session's process instead of the login shell (like kitty's `launch
     /// <cmd>` / ghostty's `command`), set at creation via `session.new --command`. The surface factory
     /// reads it once; on the command exiting the session closes (the normal single-pane exit path).
-    /// `@ObservationIgnored` + absent from `snapshot()`: transient and run-once, never persisted, so a
-    /// restored session is a plain shell.
+    /// `@ObservationIgnored`. Persisted via `SessionSnapshot.initialCommand` so a command session — e.g.
+    /// an `ssh …` shortcut, which exec-replaces the shell and so is invisible to the foreground-pid
+    /// capture — re-runs its command on restore instead of coming back a plain shell. The restore re-run
+    /// is gated by `restoreRunningCommand` (via `wasRestored`); a fresh session always runs it.
     @ObservationIgnored public var initialCommand: String?
+
+    /// True when this session was rebuilt by `AppStore.restore(from:)` rather than freshly created. The
+    /// surface factory reads it to gate the `initialCommand` re-run: a FRESH command session always runs
+    /// its command, but a RESTORED one re-runs only when `restoreRunningCommand` is on (else a plain
+    /// shell). `@ObservationIgnored`; transient, never persisted.
+    @ObservationIgnored public var wasRestored = false
 
     /// The main pane's foreground command (full argv) captured at the last clean quit, for the
     /// restore-running-command feature. `@ObservationIgnored`: written imperatively by the quit-flush

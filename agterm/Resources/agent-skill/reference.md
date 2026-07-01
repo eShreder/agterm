@@ -35,8 +35,10 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split shown), `overlay` (overlay shown), `scratch` (scratch shown), `flagged` (in the
 flagged working-set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
-idle), and `foreground`/`splitForeground` (the live argv of each pane's foreground
-process — what it is running — omitted when the pane sits at its shell prompt). Workspace nodes carry
+idle), `foreground`/`splitForeground` (the live argv of each pane's foreground
+process — what it is running — omitted when the pane sits at its shell prompt), and `background` (the
+watermark spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
+position?, repeats?}` object — omitted when no watermark is set). Workspace nodes carry
 `id`, `name`, `active`, `sessions`.
 
 ## workspace
@@ -69,7 +71,9 @@ process — what it is running — omitted when the pane sits at its shell promp
   process instead of the login shell (no echoed command line; the session closes when the command
   exits). It runs argv-style (tokenized, quotes respected, but NO shell), so shell operators (`;`,
   `&&`, `$VAR`, redirects, globs) are not interpreted — wrap them yourself: `--command "sh -c '…'"`.
-  The command is run-once and not persisted (a restored session is a plain shell). `--name`
+  The command is persisted (`SessionSnapshot.initialCommand`) and re-runs on restore when **Restore
+  running commands on restart** is on (default off → a restored session is a plain shell); a live
+  captured foreground takes precedence over it. `--name`
   seeds the session's custom name (the sidebar label; blank/omitted leaves the auto basename),
   equivalent to a `session rename` right after create.
 - `session close [--target] [--window W]`. For a tmux-backed session (attached via `tmux attach`), this
@@ -117,6 +121,14 @@ process — what it is running — omitted when the pane sits at its shell promp
 - `session focus [left|right|other] [--target] [--window W]` — move keyboard focus between the two
   split panes (`other` toggles, the default). Errors when the session has no split. Works whether the
   split is shown side-by-side or hidden (maximized) — when hidden, focusing a pane swaps which one shows.
+- `session resize (--split-ratio R | --grow-left D | --grow-right D) [--target] [--window W]` — move the
+  split DIVIDER (the divider is otherwise mouse-drag only; there is no GUI/menu/keymap action, so bind a
+  key by mapping a `command "agtermctl session resize …"` custom action). Provide exactly one form:
+  `--split-ratio` sets the absolute left-pane fraction (`0..1`); `--grow-left D` / `--grow-right D` nudge
+  it by the fraction `D` (grow-left shrinks the right pane and vice-versa). The result is clamped to
+  `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
+  under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
+  fraction; it takes effect when the split is next shown.
 - `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--target] [--window W]` —
   set the sidebar agent-status glyph. `--blink` pulses it (for attention). `--auto-reset` clears it
   back to idle once the session is visited (use for a one-shot completion flash). `--sound` plays a
@@ -131,6 +143,22 @@ process — what it is running — omitted when the pane sits at its shell promp
   `active`) and are idempotent; `clear` ignores the target and unflags every session in the window.
   Pair with `sidebar mode flagged` to see just the flagged sessions as a flat `session : workspace`
   list. Unknown mode errors. The tree's `flagged` flag tracks membership.
+- `session background image <path> [--opacity F] [--fit contain|cover|stretch|none] [--position P] [--repeat] [--target] [--window W]`
+  — composite the image at `path` (PNG or JPEG only) behind the terminal as a watermark. libghostty
+  auto-fits it to the surface and re-fits on every window resize. `--opacity` is 0.0–1.0 (default 1.0);
+  `--fit` defaults to `contain`; `--position` is `center` (default) or an edge/corner anchor
+  (`top-left`, `top-center`, `top-right`, `center-left`, `center-right`, `bottom-left`, `bottom-center`,
+  `bottom-right`); `--repeat` tiles to fill blank space. Errors on a bad fit/position, an out-of-range
+  `--opacity` (must be 0.0–1.0), an unsupported format, a missing file, or a path containing control
+  characters (the path reaches a ghostty config line, so a newline could inject other keys).
+- `session background text <text> [--color #rrggbb] [--opacity F] [--fit ...] [--position ...] [--target] [--window W]`
+  — rasterize `text` to a watermark behind the terminal. `--color` defaults to the terminal foreground
+  (must be a `#rrggbb` hex value); `--opacity`/`--fit`/`--position` as above. `text` is capped at 256
+  characters (a watermark is a word or two).
+- `session background clear [--target] [--window W]` — remove the session's watermark.
+  Per session (applies to the session's pane(s)); persisted, so it survives a relaunch. A watermark makes
+  the pane render OPAQUE, overriding window translucency (an image is invisible at 0 background-opacity).
+  Read the current watermark back from a session's `background` field in `tree --json` (omitted when none).
 - `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--target] [--window W]`
   — run `command` in an ephemeral terminal on top of the session; it closes when the command exits.
   Full-size by default (hides the session); `--size-percent N` (1–100) makes it a floating framed panel
@@ -178,6 +206,10 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.
+- `window zoom <id>` — toggle the window between its normal frame and a maximized (fill-screen, NOT
+  native fullscreen) frame, via the standard `NSWindow.zoom`. A second call restores the prior frame.
+  The window must be open. This is the control half of the double-click-on-header gesture (and the green
+  zoom button); `resize`/`move` are control-native, but `zoom` mirrors a GUI action.
 
 `window resize`/`move` are control-native (no GUI equivalent — the title bar already drags-to-resize).
 
@@ -303,8 +335,10 @@ the commit, with no preview.
 
 ## restore
 
-`agtermctl restore clear` — clear every session's saved foreground command and persist, so the next
-restart restores plain shells (not whatever each pane was running). This is the counterpart to the
+`agtermctl restore clear` — clear every session's saved CAPTURED foreground command and persist, so the
+next restart restores plain shells for those panes (not whatever each pane was running). It does NOT clear
+a `session.new --command` session's own command (`initialCommand`, the durable creation identity), which
+still re-runs on restore when the setting is on. This is the counterpart to the
 opt-in **Restore running commands on restart** setting: that setting captures each pane's foreground
 command at a clean quit and re-runs it on relaunch; `restore clear` wipes those saved commands now
 (also closing the force-quit re-fire window). App-global (no `--window`), prints `ok`.
@@ -318,6 +352,8 @@ user-edited file read at launch — there is no control command for it.
 `notFound` / `ambiguous` (target resolution), `no such session`, `invalid split mode` /
 `invalid scratch mode`, `session has no split` (focus), `no selection` (copy), `overlay already open` /
 `no overlay` / `still running` / `no result` (overlay), `invalid flag mode` (session flag),
+`invalid fit` / `invalid position` / `invalid opacity` / `invalid color` / `text too long` /
+`unsupported image (PNG or JPEG only)` / `no such image file` / `image path must not contain control characters` / `invalid background mode` (session background),
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
 `no open window` (quick/sidebar), `window not open`
 (resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound). Unknown commands fail to decode and return a structured error, never a crash.

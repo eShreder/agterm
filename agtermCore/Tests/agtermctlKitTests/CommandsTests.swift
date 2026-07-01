@@ -180,6 +180,35 @@ struct CommandsTests {
         #expect(try request(["session", "focus", "right"]) == expected)
     }
 
+    @Test func sessionResizeAbsolute() throws {
+        let expected = ControlRequest(cmd: .sessionResize, target: "active", args: ControlArgs(ratio: 0.7))
+        #expect(try request(["session", "resize", "--split-ratio", "0.7"]) == expected)
+    }
+
+    @Test func sessionResizeGrowLeftIsPositiveDelta() throws {
+        let expected = ControlRequest(cmd: .sessionResize, target: "active", args: ControlArgs(ratioDelta: 0.05))
+        #expect(try request(["session", "resize", "--grow-left", "0.05"]) == expected)
+    }
+
+    @Test func sessionResizeGrowRightIsNegativeDelta() throws {
+        let expected = ControlRequest(cmd: .sessionResize, target: "active", args: ControlArgs(ratioDelta: -0.05))
+        #expect(try request(["session", "resize", "--grow-right", "0.05"]) == expected)
+    }
+
+    @Test func sessionResizeRequiresExactlyOneForm() {
+        // neither form set, and two forms set — validate() rejects both with the same usage message.
+        #expect(validationMessage(["session", "resize"])?.contains("exactly one") == true)
+        #expect(validationMessage(["session", "resize", "--split-ratio", "0.7", "--grow-left", "0.1"])?
+            .contains("exactly one") == true)
+    }
+
+    @Test func sessionResizeRejectsNonFinite() {
+        // nan/inf parse as Double but can't JSON-encode; validate() rejects them with a clean usage error.
+        #expect(validationMessage(["session", "resize", "--split-ratio", "nan"])?.contains("finite") == true)
+        #expect(validationMessage(["session", "resize", "--grow-left", "inf"])?.contains("finite") == true)
+        #expect(validationMessage(["session", "resize", "--split-ratio", "1e999"])?.contains("finite") == true)
+    }
+
     @Test func sessionGoNext() throws {
         let expected = ControlRequest(cmd: .sessionGo, args: ControlArgs(to: "next"))
         #expect(try request(["session", "go", "--to", "next"]) == expected)
@@ -673,5 +702,70 @@ struct CommandsTests {
 
     @Test func tmuxListBuildsRequest() throws {
         #expect(try request(["tmux", "list"]).cmd == .tmuxList)
+    }
+
+    // MARK: - session background
+
+    @Test func sessionBackgroundImage() throws {
+        let expected = ControlRequest(cmd: .sessionBackground, target: "active",
+                                      args: ControlArgs(mode: "image", path: "/tmp/bg.png"))
+        #expect(try request(["session", "background", "image", "/tmp/bg.png"]) == expected)
+    }
+
+    @Test func sessionBackgroundImageWithOptions() throws {
+        let expected = ControlRequest(cmd: .sessionBackground, target: "s1",
+                                      args: ControlArgs(mode: "image", path: "/tmp/bg.png", opacity: 0.2,
+                                                        fit: "cover", position: "top-left", repeats: true))
+        let argv = ["session", "background", "image", "/tmp/bg.png", "--opacity", "0.2",
+                    "--fit", "cover", "--position", "top-left", "--repeat", "--target", "s1"]
+        #expect(try request(argv) == expected)
+    }
+
+    @Test func sessionBackgroundText() throws {
+        let expected = ControlRequest(cmd: .sessionBackground, target: "active",
+                                      args: ControlArgs(text: "DRAFT", mode: "text", color: "#ff0000", opacity: 0.15))
+        let argv = ["session", "background", "text", "DRAFT", "--color", "#ff0000", "--opacity", "0.15"]
+        #expect(try request(argv) == expected)
+    }
+
+    @Test func sessionBackgroundClear() throws {
+        let expected = ControlRequest(cmd: .sessionBackground, target: "active", args: ControlArgs(mode: "clear"))
+        #expect(try request(["session", "background", "clear"]) == expected)
+    }
+
+    @Test func sessionBackgroundRejectsBadFit() {
+        #expect(validationMessage(["session", "background", "image", "/tmp/bg.png", "--fit", "fill"]) != nil)
+    }
+
+    @Test func sessionBackgroundRejectsBadPosition() {
+        #expect(validationMessage(["session", "background", "text", "X", "--position", "middle"]) != nil)
+    }
+
+    @Test func sessionBackgroundRejectsOutOfRangeOpacity() {
+        #expect(validationMessage(["session", "background", "image", "/tmp/bg.png", "--opacity", "1.5"]) != nil)
+        #expect(validationMessage(["session", "background", "text", "X", "--opacity", "-0.2"]) != nil)
+    }
+
+    @Test func sessionBackgroundRejectsBadColor() {
+        #expect(validationMessage(["session", "background", "text", "X", "--color", "red"]) != nil)
+        #expect(validationMessage(["session", "background", "text", "X", "--color", "#fff"]) != nil)
+    }
+
+    @Test func sessionBackgroundAcceptsValidColor() throws {
+        let expected = ControlRequest(cmd: .sessionBackground, target: "active",
+                                      args: ControlArgs(text: "X", mode: "text", color: "#ff8800"))
+        #expect(try request(["session", "background", "text", "X", "--color", "#ff8800"]) == expected)
+    }
+
+    @Test func sessionBackgroundRejectsEmptyAndTooLongText() {
+        #expect(validationMessage(["session", "background", "text", ""]) != nil)
+        #expect(validationMessage(["session", "background", "text",
+                                   String(repeating: "A", count: WatermarkConfig.maxTextLength + 1)]) != nil)
+    }
+
+    @Test func sessionBackgroundImageRejectsControlCharPath() {
+        // the config-injection vector: a newline in the path would smuggle an extra ghostty key into the
+        // per-surface overlay. Caught CLI-side (matching the server boundary) before any round-trip.
+        #expect(validationMessage(["session", "background", "image", "x.png\nclipboard-read = allow\ny.png"]) != nil)
     }
 }
