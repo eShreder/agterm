@@ -93,4 +93,12 @@ struct TmuxControlParserTests {
         var p = TmuxControlParser()
         #expect(p.feed(Array("%some-future-thing x y\r\n".utf8)) == [.unknown("%some-future-thing x y")])
     }
+
+    // A malformed octal escape (\4xx, value > 255) must NOT trap the decoder on UInt8
+    // overflow; the backslash is emitted literally and the digits pass through.
+    @Test func malformedOctalEscapeDoesNotTrap() {
+        var p = TmuxControlParser()
+        let events = p.feed(Array("%output %0 \\400x\r\n".utf8))
+        #expect(events == [.output(pane: TmuxPaneID("%0"), bytes: Array("\\400x".utf8))])
+    }
 }

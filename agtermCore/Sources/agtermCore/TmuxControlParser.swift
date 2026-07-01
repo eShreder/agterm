@@ -105,9 +105,14 @@ public struct TmuxControlParser: Sendable {
         func isOctal(_ b: UInt8) -> Bool { b >= 0x30 && b <= 0x37 }   // '0'..'7'
         while i < bytes.count {
             let b = bytes[i]
-            if b == 0x5C, i + 3 < bytes.count, isOctal(bytes[i+1]), isOctal(bytes[i+2]), isOctal(bytes[i+3]) {
-                let v = (bytes[i+1] - 0x30) * 64 + (bytes[i+2] - 0x30) * 8 + (bytes[i+3] - 0x30)
-                out.append(v); i += 4
+            // A valid tmux octal escape is `\` + 3 octal digits with value <= 0o377 (255),
+            // so the first digit is 0-3. Requiring that (and computing in Int) keeps a
+            // malformed `\4xx` from a corrupt/non-tmux stream from overflowing UInt8 and
+            // trapping — it falls through to a literal backslash instead.
+            if b == 0x5C, i + 3 < bytes.count,
+               bytes[i+1] >= 0x30, bytes[i+1] <= 0x33, isOctal(bytes[i+2]), isOctal(bytes[i+3]) {
+                let v = Int(bytes[i+1] - 0x30) * 64 + Int(bytes[i+2] - 0x30) * 8 + Int(bytes[i+3] - 0x30)
+                out.append(UInt8(v)); i += 4
             } else {
                 out.append(b); i += 1
             }
