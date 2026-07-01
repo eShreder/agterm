@@ -257,3 +257,17 @@ agtermctl theme set                          # ghostty's built-in default (no th
 agtermctl tree --json --window work          # the "work" window's tree (prefix match)
 agtermctl session new --window work --cwd "$HOME"
 ```
+
+## Attach a remote tmux -CC session
+
+```bash
+# ssh to host and attach-or-create the "main" tmux session; each tmux window becomes
+# a native agterm session in a "tmux: myhost" workspace (v1: no splits — a split window
+# shows its leading pane).
+agtermctl tmux attach myhost --session main --workspace "remote work"
+
+id=$(agtermctl tmux list --json | jq -r '.result.tmuxConnections[0].id')  # connection id = workspace id
+agtermctl tmux list                          # human: "<id>  myhost  [zsh, logs]"
+agtermctl tmux detach "$id"                  # soft: local workspace removed, remote session survives
+agtermctl tmux kill "$id"                    # hard: kill-session on the remote (destroys it)
+```
