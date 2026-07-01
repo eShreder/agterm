@@ -156,7 +156,7 @@ paths:
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (46 commands):**
+- **Command catalog (50 commands):**
   - `tree`
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
   - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.go`/`session.copy`/`session.search`/`session.status`/`session.flag`/`session.overlay.open`/`session.overlay.close`/`session.overlay.result`
@@ -169,6 +169,13 @@ paths:
   - `config.reload` (see the Settings section)
   - `theme.set`/`theme.list` (see the Theme picker section)
   - `restore.clear` (see the Settings section)
+  - `tmux.attach`/`tmux.detach`/`tmux.list`/`tmux.kill` (native `tmux -CC`: `tmux.attach` spawns an
+    `ssh <host> tmux -CC` gateway whose windows become native agterm sessions in a `tmux: <host>`
+    workspace, v1 NO-splits — a split tmux window shows only its leading pane;
+    the connection id used by detach/kill/list is the tmux WORKSPACE's id; `tmux.detach` is soft
+    (`detach-client`, the remote session survives for reattach), `tmux.kill` is a hard remote
+    `kill-session`, `tmux.list` reports active connections' id/host/window-names.
+    See the tmux -CC feature spec + phased plans under `docs/superpowers/`)
 
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
   blocks on a modal).
@@ -553,5 +560,5 @@ paths:
   `testRestoreClearSucceeds`) in `ControlAPIUITests`.
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 46 to match.
+  examples.md recipes) and the command count there is bumped to 50 to match.
 
