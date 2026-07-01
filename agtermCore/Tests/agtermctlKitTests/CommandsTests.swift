@@ -654,4 +654,24 @@ struct CommandsTests {
         let command = try Tree.parse([])
         #expect(command.options.socketPath(env: [:]) == "/tmp/agterm/agterm.sock")
     }
+
+    // MARK: - tmux subcommands
+
+    @Test func tmuxAttachBuildsRequest() throws {
+        let req = try request(["tmux", "attach", "myhost", "--session", "work", "--workspace", "remote"])
+        #expect(req.cmd == .tmuxAttach)
+        #expect(req.args?.host == "myhost")
+        #expect(req.args?.name == "work")
+        #expect(req.args?.workspace == "remote")
+    }
+
+    @Test func tmuxDetachAndKillCarryTarget() throws {
+        #expect(try request(["tmux", "detach", "AABBCC"]).cmd == .tmuxDetach)
+        #expect(try request(["tmux", "detach", "AABBCC"]).target == "AABBCC")
+        #expect(try request(["tmux", "kill", "AABBCC"]).cmd == .tmuxKill)
+    }
+
+    @Test func tmuxListBuildsRequest() throws {
+        #expect(try request(["tmux", "list"]).cmd == .tmuxList)
+    }
 }

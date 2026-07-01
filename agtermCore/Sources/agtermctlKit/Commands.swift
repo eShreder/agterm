@@ -76,7 +76,7 @@ public struct Agtermctl: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "agtermctl",
         abstract: "Drive agterm over its control socket.",
-        subcommands: [Tree.self, Workspace.self, Session.self, Window.self, Quick.self, Sidebar.self, Notify.self, Font.self, Keymap.self, Config.self, Theme.self, Restore.self]
+        subcommands: [Tree.self, Workspace.self, Session.self, Window.self, Quick.self, Sidebar.self, Notify.self, Font.self, Keymap.self, Config.self, Theme.self, Restore.self, Tmux.self]
     )
 
     public init() {}
@@ -808,6 +808,56 @@ struct Font: ParsableCommand {
 
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .fontReset, target: target.target, args: options.withWindow())
+        }
+    }
+}
+
+// MARK: - tmux
+
+struct Tmux: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Attach/detach/list/kill tmux -CC connections.",
+        subcommands: [Attach.self, Detach.self, List.self, Kill.self]
+    )
+
+    struct Attach: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Attach an ssh+tmux -CC connection.")
+        @Argument(help: "Host to ssh into.") var host: String
+        @Option(help: "tmux session name.") var session: String?
+        @Option(help: "Workspace name for the connection.") var workspace: String?
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxAttach, args: options.withWindow(ControlArgs(name: session, workspace: workspace, host: host)))
+        }
+    }
+
+    struct Detach: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Detach a tmux connection (session survives).")
+        @Argument(help: "Connection id (workspace id).") var id: String
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxDetach, target: id, args: options.withWindow())
+        }
+    }
+
+    struct List: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "List active tmux connections.")
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxList, args: options.withWindow())
+        }
+    }
+
+    struct Kill: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Kill a tmux session (hard, remote).")
+        @Argument(help: "Connection id (workspace id).") var id: String
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxKill, target: id, args: options.withWindow())
         }
     }
 }
