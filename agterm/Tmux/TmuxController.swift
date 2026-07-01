@@ -205,6 +205,14 @@ import agtermCore
         gateway?.send(.killWindow(w)); return true
     }
 
+    /// Create a new window in the attached tmux session (like iTerm2 ⌘T). It comes back as a
+    /// `%window-add` → a new agterm session. Returns false if there's no live gateway.
+    @discardableResult func newWindow() -> Bool {
+        guard gateway != nil else { return false }
+        gateway?.send(.newWindow(name: nil))
+        return true
+    }
+
     /// A headless `GhosttySurfaceView` wired to route this window's input/resize back to tmux.
     /// Seeding it into `Session.surface` before the deck mounts stops the shell factory.
     private func makeHeadlessSurface(for window: TmuxWindowID) -> GhosttySurfaceView {

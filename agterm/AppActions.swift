@@ -69,7 +69,16 @@ final class AppActions {
     }
 
     func newSession() {
-        guard let store, let workspaceID = store.currentWorkspaceID,
+        guard let store else { return }
+        // In a tmux-backed session, "New Session" creates a new WINDOW in the attached tmux session
+        // (like iTerm2 ⌘T) — it comes back as a %window-add → a new agterm session. A normal session
+        // keeps the master behavior: a local shell in the current workspace.
+        if let active = store.activeSession, active.tmuxBinding != nil,
+           let controller = tmuxControllerOwning(active.id) {
+            controller.newWindow()
+            return
+        }
+        guard let workspaceID = store.currentWorkspaceID,
               let session = store.addSession(toWorkspace: workspaceID,
                                              cwd: FileManager.default.homeDirectoryForCurrentUser.path)
         else { return }
