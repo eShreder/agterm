@@ -23,6 +23,8 @@ import agtermCore
     private var windowToSession: [TmuxWindowID: UUID] = [:]       // tmux window -> agterm session
     private var pendingLeadingPane: [TmuxWindowID: TmuxPaneID] = [:]
     private var bootstrapSessionID: UUID?
+    private var blockLines: [Int: [String]] = [:]
+    private var initializedWindows = false
 
     init(store: AppStore) { self.store = store }
 
@@ -31,6 +33,10 @@ import agtermCore
     /// Spawn `ssh -tt <host> tmux -CC new -A -s <name>` in a pty and begin the bootstrap phase.
     /// `-tt` forces a tty so tmux enters control mode; `new -A` attaches-or-creates the session.
     func attach(host: String, sessionName: String) {
+        // Re-attach without an intervening detach: tear down the live gateway first so it's
+        // `stop()`ped (a bare reassign would leak its pty fd / orphan the child) before the new
+        // workspace is created.
+        if gateway != nil { teardownWorkspace() }
         workspaceID = store.addWorkspace(name: "tmux: \(host)").id
         let remote = "tmux -CC new -A -s \(sessionName)"
         startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
@@ -45,6 +51,10 @@ import agtermCore
     /// `AGTERM_TMUX_SOCKET` selects a named server via `-L <socket>` (so the Phase-3 gate can point at
     /// an isolated `tmux -L agtgate` without threading args through the binary path).
     func attachLocal(sessionName: String) {
+        // Re-attach without an intervening detach: tear down the live gateway first so it's
+        // `stop()`ped (a bare reassign would leak its pty fd / orphan the child) before the new
+        // workspace is created.
+        if gateway != nil { teardownWorkspace() }
         workspaceID = store.addWorkspace(name: "tmux: local").id
         let env = ProcessInfo.processInfo.environment
         let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"
@@ -75,6 +85,24 @@ import agtermCore
     // MARK: - Event → model → effects
 
     private func apply(_ event: TmuxEvent) {
+        // Collect the `list-windows` reply block (requested on handshake). tmux sends no
+        // `%window-add` for windows that already existed at attach, so on the FIRST completed block
+        // we parse it and synthesize per-window events to create those sessions. These `.block*`
+        // events fold to `[]` in the model, so the model.handle fold below stays harmless.
+        switch event {
+        case .blockBegin(let num): blockLines[num] = []
+        case .blockLine(let num, let text): blockLines[num, default: []].append(text)
+        case .blockEnd(let num, _):
+            let lines = blockLines.removeValue(forKey: num) ?? []
+            if !initializedWindows {
+                let windows = TmuxWindowList.parse(lines)
+                if !windows.isEmpty {
+                    initializedWindows = true
+                    for w in windows { applyInitialWindow(w) }
+                }
+            }
+        default: break
+        }
         // Record the window's leading pane BEFORE folding into the model, so `sendKeys` has a
         // target the instant a fresh surface is wired. The model tracks pane→window internally
         // but doesn't expose the leading pane.
@@ -82,6 +110,16 @@ import agtermCore
             if let leading = TmuxLayout.panes(in: layout).panes.first { pendingLeadingPane[window] = leading }
         }
         for effect in model.handle(event) { apply(effect) }
+    }
+
+    /// Synthesize the `windowAdd`+`layoutChange`+`windowRenamed` events for a window that already
+    /// existed at attach (from the `list-windows` reply), driving the SAME effect path as a live
+    /// `%window-add` so the session is created with its leading pane bound and its name applied.
+    private func applyInitialWindow(_ w: (id: TmuxWindowID, name: String, layout: String)) {
+        if let leading = TmuxLayout.panes(in: w.layout).panes.first { pendingLeadingPane[w.id] = leading }
+        for effect in model.handle(.windowAdd(w.id)) { apply(effect) }
+        for effect in model.handle(.layoutChange(window: w.id, layout: w.layout)) { apply(effect) }
+        if !w.name.isEmpty { for effect in model.handle(.windowRenamed(w.id, name: w.name)) { apply(effect) } }
     }
 
     private func apply(_ effect: TmuxModelEffect) {
@@ -153,6 +191,9 @@ import agtermCore
     /// tmux entered control mode: the auth phase is over, so close the bootstrap session.
     private func onHandshake() {
         if let id = bootstrapSessionID { store.closeSession(id); bootstrapSessionID = nil }
+        // tmux sends no `%window-add` for windows that existed before we attached. Ask for the
+        // current list; the reply block is parsed in `apply(_:)` and turned into per-window events.
+        gateway?.send(.listWindows)
     }
 
     // MARK: - Teardown
@@ -168,6 +209,8 @@ import agtermCore
         workspaceID = nil
         windowToSession.removeAll()
         pendingLeadingPane.removeAll()
+        blockLines.removeAll()
+        initializedWindows = false
         gateway?.stop()
         gateway = nil
     }
