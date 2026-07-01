@@ -1490,6 +1490,8 @@ final class ControlServer {
             if library.isOpen(id) {
                 library.closeWindow(id)
             }
+            // dropping a store is unobserved, so poke the Dock badge to drop this window's unseen total.
+            DockBadgeController.shared.refresh()
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
