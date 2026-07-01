@@ -38,6 +38,16 @@ public final class PTYProcess: @unchecked Sendable {
         let subFD = open(ptsPath, O_RDWR | O_NOCTTY)
         guard subFD >= 0 else { close(primary); throw PTYError.openFailed }
 
+        // Raw mode: a control-mode transport carries the multiplexer's stream (and binary
+        // %output) verbatim — cooked-mode output post-processing (ONLCR turning every \n
+        // into \r\n) and input echo/canonicalization would corrupt it. Match what a
+        // control-mode child (tmux -CC) sets on its own tty.
+        var term = termios()
+        if tcgetattr(subFD, &term) == 0 {
+            cfmakeraw(&term)
+            tcsetattr(subFD, TCSANOW, &term)
+        }
+
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         posix_spawn_file_actions_adddup2(&actions, subFD, 0)
