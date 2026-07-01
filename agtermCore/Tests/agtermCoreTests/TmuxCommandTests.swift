@@ -9,6 +9,10 @@ struct TmuxCommandTests {
         #expect(TmuxCommandEncoder.encode(.renameWindow(TmuxWindowID("@0"), name: "api")) == "rename-window -t @0 api")
     }
 
+    @Test func encodesListWindows() {
+        #expect(TmuxCommandEncoder.encode(.listWindows) == "list-windows")
+    }
+
     @Test func encodesResizeAndDetach() {
         #expect(TmuxCommandEncoder.encode(.resizeClient(cols: 80, rows: 24)) == "refresh-client -C 80x24")
         #expect(TmuxCommandEncoder.encode(.detachClient) == "detach-client")

@@ -11,8 +11,10 @@ struct TmuxWindowListTests {
         #expect(result.count == 2)
         #expect(result[0].id == TmuxWindowID("@0"))
         #expect(result[0].name == "zsh")
+        #expect(result[0].layout == "b25d,80x24,0,0,0")
         #expect(result[1].id == TmuxWindowID("@1"))
         #expect(result[1].name == "second")
+        #expect(result[1].layout == "b25e,80x24,0,0,1")
     }
 
     @Test func ignoresRowsWithoutAWindowId() {
@@ -25,5 +27,6 @@ struct TmuxWindowListTests {
         #expect(r.count == 1)
         #expect(r[0].id == TmuxWindowID("@7"))
         #expect(r[0].name == "api")
+        #expect(r[0].layout == "abcd,80x24,0,0,5")
     }
 }

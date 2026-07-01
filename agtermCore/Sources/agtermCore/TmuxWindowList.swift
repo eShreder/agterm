@@ -1,6 +1,6 @@
 public enum TmuxWindowList {
-    public static func parse(_ blockLines: [String]) -> [(id: TmuxWindowID, name: String)] {
-        var result: [(id: TmuxWindowID, name: String)] = []
+    public static func parse(_ blockLines: [String]) -> [(id: TmuxWindowID, name: String, layout: String)] {
+        var result: [(id: TmuxWindowID, name: String, layout: String)] = []
         for line in blockLines {
             // Window id: the whitespace token beginning with '@'.
             guard let idToken = line.split(separator: " ").first(where: { $0.hasPrefix("@") })
@@ -13,7 +13,13 @@ public enum TmuxWindowList {
             // Strip a trailing tmux flag char ('*' active / '-' last).
             var name = namePart
             if let last = name.last, last == "*" || last == "-" { name.removeLast() }
-            result.append((TmuxWindowID(String(idToken)), name))
+            // Layout: the "[layout <str>]" field.
+            var layout = ""
+            if let lr = line.range(of: "[layout ") {
+                let after = line[lr.upperBound...]
+                if let close = after.firstIndex(of: "]") { layout = String(after[..<close]) }
+            }
+            result.append((TmuxWindowID(String(idToken)), name, layout))
         }
         return result
     }

@@ -7,6 +7,7 @@ public enum TmuxCommand: Equatable, Sendable {
     case sendKeys(pane: TmuxPaneID, bytes: [UInt8])
     case resizeClient(cols: Int, rows: Int)
     case detachClient
+    case listWindows
 }
 
 public enum TmuxCommandEncoder {
@@ -25,6 +26,8 @@ public enum TmuxCommandEncoder {
             return "refresh-client -C \(cols)x\(rows)"
         case .detachClient:
             return "detach-client"
+        case .listWindows:
+            return "list-windows"
         }
     }
 }
