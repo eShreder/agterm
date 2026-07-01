@@ -13,6 +13,7 @@
 # whenever GhosttyKit.xcframework and the resources are already present.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 
 GHOSTTY_REPO="https://github.com/ghostty-org/ghostty"
 GHOSTTY_REV="4dcb09ada0c0909717d92547623b26eafa50ca8a"  # 2026-04-30, last pre-regression build we verified
@@ -64,6 +65,14 @@ git init -q "$BUILD_DIR"
 git -C "$BUILD_DIR" remote add origin "$GHOSTTY_REPO"
 git -C "$BUILD_DIR" fetch -q --depth 1 origin "$GHOSTTY_REV"
 git -C "$BUILD_DIR" -c advice.detachedHead=false checkout -q FETCH_HEAD
+
+# Apply local engine patches (additive; see patches/*.patch).
+shopt -s nullglob
+for p in "$ROOT"/patches/*.patch; do
+  echo "Applying engine patch: $(basename "$p")"
+  git -C "$BUILD_DIR" apply --whitespace=nowarn "$p"
+done
+shopt -u nullglob
 
 echo "building GhosttyKit.xcframework with zig 0.15.2 (a few minutes)..."
 ( cd "$BUILD_DIR" && "$ZIG" build -Doptimize=ReleaseFast -Demit-xcframework=true -Dxcframework-target=native -Demit-macos-app=false )
