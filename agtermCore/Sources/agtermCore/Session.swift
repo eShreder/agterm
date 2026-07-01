@@ -193,6 +193,10 @@ public final class Session: Identifiable {
     /// `@ObservationIgnored` + weak (the session strongly owns its panes); ephemeral, never persisted.
     @ObservationIgnored public weak var searchSurface: (any TerminalSurface)?
 
+    /// Which tmux `-CC` connection/window this session mirrors, or nil for a plain (non-tmux) session.
+    /// `@ObservationIgnored` + absent from `snapshot()`: ephemeral tmux mirror state, never persisted.
+    @ObservationIgnored public var tmuxBinding: TmuxBinding?
+
     public init(id: UUID = UUID(), initialCwd: String, customName: String? = nil) {
         self.id = id
         self.initialCwd = initialCwd

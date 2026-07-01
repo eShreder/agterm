@@ -117,8 +117,8 @@ public final class AppStore {
     /// return only the focused one and the new workspace would be silently hidden until
     /// the user manually unfocuses (the same auto-reveal contract as `addSession`).
     @discardableResult
-    public func addWorkspace(name: String) -> Workspace {
-        let workspace = Workspace(name: name)
+    public func addWorkspace(name: String, ephemeral: Bool = false) -> Workspace {
+        let workspace = Workspace(name: name, ephemeral: ephemeral)
         workspaces.append(workspace)
         focusedWorkspaceID = nil
         save()
@@ -662,7 +662,7 @@ public final class AppStore {
     /// live `currentCwd` (or `initialCwd` if no PWD report has arrived). Runs on
     /// `@MainActor`; the resulting value is `Sendable` and safe to hand to a writer.
     public func snapshot() -> Snapshot {
-        let workspaceSnapshots = workspaces.map { workspace in
+        let workspaceSnapshots = workspaces.filter { !$0.ephemeral }.map { workspace in
             WorkspaceSnapshot(id: workspace.id, name: workspace.name, sessions: workspace.sessions.map { session in
                 SessionSnapshot(id: session.id, customName: session.customName, cwd: session.currentCwd ?? session.initialCwd,
                                 isSplit: session.isSplit, fontSize: session.fontSize,

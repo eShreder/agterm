@@ -132,6 +132,26 @@ final class PersistenceTests {
         #expect(restored.snapshot() == snapshot)
     }
 
+    @Test func ephemeralWorkspaceIsNotSnapshotted() {
+        let app = AppStore(persistence: store)
+        let normal = app.addWorkspace(name: "keep")
+        let mirror = app.addWorkspace(name: "tmux: host", ephemeral: true)
+        let snapshot = app.snapshot()
+        #expect(snapshot.workspaces.contains { $0.id == normal.id })
+        #expect(!snapshot.workspaces.contains { $0.id == mirror.id })
+    }
+
+    @Test func tmuxBindingIsNotPersisted() {
+        let app = AppStore(persistence: store)
+        let work = app.addWorkspace(name: "work")
+        let session = try! #require(app.addSession(toWorkspace: work.id, cwd: "/tmp"))
+        session.tmuxBinding = TmuxBinding(connectionID: UUID(), window: TmuxWindowID("@0"))
+
+        let snapshot = app.snapshot()
+        // the session is snapshotted, but SessionSnapshot has no tmuxBinding field at all.
+        #expect(snapshot.workspaces.first(where: { $0.id == work.id })?.sessions.contains { $0.id == session.id } == true)
+    }
+
     @Test func legacyFileWithRemovedKeysLoadsAndKeepsWorkspaces() throws {
         // a workspaces.json written by an older build carries removed keys (statusBarHidden,
         // titleBarHidden). they must be ignored, not fail the load and wipe the tree.
