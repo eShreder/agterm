@@ -165,7 +165,7 @@ import agtermCore
             else { return }
             windowToSession[window] = session.id
             session.surface = makeHeadlessSurface(for: window)
-            session.tmuxBinding = TmuxBinding(connectionID: workspaceID ?? UUID(), window: window)
+            session.tmuxBinding = TmuxBinding(connectionID: workspaceID, window: window)
         case .renameSession(let window, let name):
             if let id = windowToSession[window] { store.renameSession(id, to: name) }
         case .removeSession(let window):

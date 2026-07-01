@@ -4,9 +4,17 @@ import Testing
 struct TmuxCommandTests {
     @Test func encodesWindowCommands() {
         #expect(TmuxCommandEncoder.encode(.newWindow(name: nil)) == "new-window")
-        #expect(TmuxCommandEncoder.encode(.newWindow(name: "logs")) == "new-window -n logs")
+        #expect(TmuxCommandEncoder.encode(.newWindow(name: "logs")) == "new-window -n 'logs'")
         #expect(TmuxCommandEncoder.encode(.killWindow(TmuxWindowID("@1"))) == "kill-window -t @1")
-        #expect(TmuxCommandEncoder.encode(.renameWindow(TmuxWindowID("@0"), name: "api")) == "rename-window -t @0 api")
+        #expect(TmuxCommandEncoder.encode(.renameWindow(TmuxWindowID("@0"), name: "api")) == "rename-window -t @0 'api'")
+    }
+
+    // A name with spaces (or a single quote) must be single-quoted so tmux parses it as ONE argument.
+    @Test func quotesWindowNamesWithSpaces() {
+        #expect(TmuxCommandEncoder.encode(.renameWindow(TmuxWindowID("@0"), name: "my project"))
+                == "rename-window -t @0 'my project'")
+        #expect(TmuxCommandEncoder.encode(.newWindow(name: "a'b"))
+                == "new-window -n 'a'\\''b'")
     }
 
     @Test func encodesListWindows() {
