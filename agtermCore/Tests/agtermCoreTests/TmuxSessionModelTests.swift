@@ -60,4 +60,11 @@ struct TmuxSessionModelTests {
         _ = m.handle(.windowAdd(TmuxWindowID("@0")))
         #expect(m.handle(.exit(reason: nil)) == [.tearDown])
     }
+
+    @Test func duplicateWindowAddIsIdempotent() {
+        var m = TmuxSessionModel()
+        #expect(m.handle(.windowAdd(TmuxWindowID("@0"))) == [.createSession(window: TmuxWindowID("@0"), name: "")])
+        // A second windowAdd for the same window must NOT create a second session.
+        #expect(m.handle(.windowAdd(TmuxWindowID("@0"))) == [])
+    }
 }

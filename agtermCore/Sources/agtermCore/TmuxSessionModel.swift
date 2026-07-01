@@ -17,6 +17,7 @@ public struct TmuxSessionModel: Sendable {
     public mutating func handle(_ event: TmuxEvent) -> [TmuxModelEffect] {
         switch event {
         case .windowAdd(let w):
+            guard !windows.contains(w) else { return [] }
             windows.insert(w)
             return [.createSession(window: w, name: "")]
         case .windowRenamed(let w, let name):
