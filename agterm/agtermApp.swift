@@ -135,6 +135,9 @@ struct agtermApp: App {
                     // reference so it can stop + unlink the socket on terminate.
                     appDelegate.controlServer = controlServer
                     controlServer.start()
+                    // hand the delegate the action hub so the env-gated local-tmux launch hook
+                    // (applicationDidFinishLaunching) can drive attachLocal once a window + store exist.
+                    appDelegate.actions = actions
                     // the quick terminal is per-window now: each WindowContentView owns its own
                     // controller and binds its own cwdProvider to that window's active session.
                     // install the Ctrl-Tab session-switcher key monitors (idempotent).
@@ -694,6 +697,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stop the listener and unlink the socket on terminate.
     var controlServer: ControlServer?
 
+    /// The action hub, handed over once the scene appears so the env-gated local-tmux gate hook
+    /// (`applicationDidFinishLaunching`) can drive `attachLocal` after a window + store exist.
+    var actions: AppActions?
+
     /// The custom-command key-monitor runner, handed over once the scene appears so the delegate can
     /// remove its `NSEvent` monitor and observer on terminate.
     var customCommandRunner: CustomCommandRunner?
@@ -738,6 +745,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // DEV-ONLY: the tmux -CC headless-surface viability gate. Behind AGTERM_HEADLESS_HARNESS=1, so a
         // normal launch is completely unaffected (no headless surface, no extra window).
         if HeadlessHarness.isEnabled { HeadlessHarness.start() }
+        // DEV-ONLY Phase-3 gate: attach to a LOCAL tmux -CC (no ssh) behind AGTERM_TMUX_LOCAL=1. The
+        // 1.0s delay lets the scene `.task` run first, so a window + AppStore exist (library.activeStore
+        // non-nil) and the delegate has been handed `actions`. A normal launch is unaffected.
+        if ProcessInfo.processInfo.environment["AGTERM_TMUX_LOCAL"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.actions?.attachLocal(sessionName: "agtgate")
+            }
+        }
         scheduleRestoredWindowReconciliation(reason: "did-finish-launching")
     }
 

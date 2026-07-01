@@ -117,6 +117,36 @@ final class AppActions {
         store.setAgentIndicator(AgentIndicator(), forSession: id)
     }
 
+    // MARK: - Tmux (-CC control mode)
+
+    /// One `TmuxController` per target store (keyed by store identity), so each window's tmux attach
+    /// gets its own gateway + workspace. Created on demand; kept for the app's lifetime (an attach
+    /// tears down its own workspace on detach/exit, so a re-attach reuses the same controller).
+    private var tmuxControllers: [ObjectIdentifier: TmuxController] = [:]
+
+    private func tmuxController(for store: AppStore) -> TmuxController {
+        let key = ObjectIdentifier(store)
+        if let existing = tmuxControllers[key] { return existing }
+        let controller = TmuxController(store: store)
+        tmuxControllers[key] = controller
+        return controller
+    }
+
+    /// Attach to a remote tmux session over ssh (`ssh -tt <host> tmux -CC new -A -s <name>`), mirroring
+    /// each tmux window into a fresh "tmux: <host>" workspace in the frontmost window's store. No-op
+    /// when no window is open. (Phase 4 exposes this over the control channel; Task 6 wires the entry.)
+    func attachTmux(host: String, sessionName: String) {
+        guard let store else { return }
+        tmuxController(for: store).attach(host: host, sessionName: sessionName)
+    }
+
+    /// Attach to a LOCAL tmux session (`tmux -CC new -A -s <name>`, no ssh) — the Phase-3 end-to-end
+    /// gate path (env-gated launch hook in `agtermApp`). No-op when no window is open.
+    func attachLocal(sessionName: String) {
+        guard let store else { return }
+        tmuxController(for: store).attachLocal(sessionName: sessionName)
+    }
+
     /// Re-read and re-parse `keymap.conf`, re-rendering the data-driven menu shortcuts and rebuilding
     /// the custom-command runner + the palette's custom items. Shared by the View menu item, the
     /// action palette, and the control channel (`keymap.reload`). No-op before the scene wires the

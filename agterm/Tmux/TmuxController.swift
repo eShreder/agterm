@@ -31,17 +31,39 @@ import agtermCore
     /// Spawn `ssh -tt <host> tmux -CC new -A -s <name>` in a pty and begin the bootstrap phase.
     /// `-tt` forces a tty so tmux enters control mode; `new -A` attaches-or-creates the session.
     func attach(host: String, sessionName: String) {
-        let ws = store.addWorkspace(name: "tmux: \(host)")
-        workspaceID = ws.id
+        workspaceID = store.addWorkspace(name: "tmux: \(host)").id
+        let remote = "tmux -CC new -A -s \(sessionName)"
+        startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
+                     env: ProcessInfo.processInfo.environment)
+    }
+
+    /// Attach to a LOCAL tmux (no ssh): spawn `tmux -CC new -A -s <name>` directly. Reuses the SAME
+    /// gateway/event/effect plumbing as `attach` via `startGateway`. There's no ssh auth, so the
+    /// handshake arrives immediately and the bootstrap phase is effectively a no-op (still safe — the
+    /// `applyBootstrap`/`onHandshake` path just never has interactive prompt bytes to show). The tmux
+    /// path comes from `AGTERM_TMUX_BIN` (else Homebrew's `/opt/homebrew/bin/tmux`); an optional
+    /// `AGTERM_TMUX_SOCKET` selects a named server via `-L <socket>` (so the Phase-3 gate can point at
+    /// an isolated `tmux -L agtgate` without threading args through the binary path).
+    func attachLocal(sessionName: String) {
+        workspaceID = store.addWorkspace(name: "tmux: local").id
+        let env = ProcessInfo.processInfo.environment
+        let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"
+        let socketArgs = env["AGTERM_TMUX_SOCKET"].map { ["-L", $0] } ?? []
+        let args = [tmuxPath] + socketArgs + ["-CC", "new", "-A", "-s", sessionName]
+        startGateway(path: tmuxPath, args: args, env: env)
+    }
+
+    /// Build the `TmuxGateway` with the shared callback set (each closure hops to the main actor
+    /// before touching `self`) and start it on `path`/`args`/`env`. Used by both `attach` (ssh) and
+    /// `attachLocal` (local tmux) so the two entry points can't drift in how they wire events.
+    private func startGateway(path: String, args: [String], env: [String: String]) {
         let gw = TmuxGateway(callbacks: .init(
             onBootstrapBytes: { data in DispatchQueue.main.async { [weak self] in self?.applyBootstrap(data) } },
             onHandshake: { DispatchQueue.main.async { [weak self] in self?.onHandshake() } },
             onEvent: { event in DispatchQueue.main.async { [weak self] in self?.apply(event) } },
             onExit: { _ in DispatchQueue.main.async { [weak self] in self?.onExit() } }))
         self.gateway = gw
-        let remote = "tmux -CC new -A -s \(sessionName)"
-        let args = ["/usr/bin/ssh", "-tt", host, remote]
-        try? gw.start(path: "/usr/bin/ssh", args: args, env: ProcessInfo.processInfo.environment)
+        try? gw.start(path: path, args: args, env: env)
     }
 
     /// Send `detach-client` and tear down the local workspace (also stops the gateway).
