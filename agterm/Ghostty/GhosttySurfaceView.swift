@@ -154,6 +154,11 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// tmux -CC fork-viability gate and carries no production code path.
     private var isHeadless = false
 
+    /// DEV-ONLY: bytes passed to `writeOutput(_:)` while `isHeadless` is true but `surface` is still nil
+    /// (before `createHeadlessSurface` runs). Flushed and cleared at the end of `createHeadlessSurface`
+    /// once the surface exists, so `%output` bytes fed before the eager-deck view mounts aren't lost.
+    private var pendingHeadlessOutput = Data()
+
     /// DEV-ONLY: the closure the headless `on_input` trampoline routes bytes to, on the main actor. The
     /// bytes are copied into a `Data` out of the C buffer BEFORE the actor hop (see `onInputTrampoline`).
     /// nil for every normal surface.
@@ -519,12 +524,24 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             ghostty_surface_set_display_id(surface, displayID)
         }
         updateGhosttyFocus()
+
+        if !pendingHeadlessOutput.isEmpty {
+            let buffered = pendingHeadlessOutput
+            pendingHeadlessOutput.removeAll()
+            writeOutput(buffered)
+        }
     }
 
     /// DEV-ONLY: feed external VT bytes to the headless screen (`ghostty_surface_write_output`). The bytes
-    /// are copied by libghostty; no buffer must outlive the call. No-op before the surface exists.
+    /// are copied by libghostty; no buffer must outlive the call. Before the surface exists, headless bytes
+    /// are buffered in `pendingHeadlessOutput` and flushed once `createHeadlessSurface` creates it, so
+    /// output written before the eager-deck view mounts isn't lost.
     func writeOutput(_ data: Data) {
-        guard let surface, !data.isEmpty else { return }
+        guard !data.isEmpty else { return }
+        guard let surface else {
+            if isHeadless { pendingHeadlessOutput.append(data) }
+            return
+        }
         data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             ghostty_surface_write_output(surface, base.assumingMemoryBound(to: CChar.self), UInt(data.count))
