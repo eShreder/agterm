@@ -1,0 +1,266 @@
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 5d16f33..a0b8daa 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -1314,6 +1314,8 @@ fn childExitedAbnormally(
+     // Build up our command for the error message
+     const command = try std.mem.join(alloc, " ", switch (self.io.backend) {
+         .exec => |*exec| exec.subprocess.args,
++        // Headless owns no subprocess, so it has no command to report.
++        .headless => &[_][:0]const u8{},
+     });
+     const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
+ 
+diff --git a/src/termio.zig b/src/termio.zig
+index b168851..b0ddea9 100644
+--- a/src/termio.zig
++++ b/src/termio.zig
+@@ -23,6 +23,7 @@ const message = @import("termio/message.zig");
+ pub const backend = @import("termio/backend.zig");
+ pub const mailbox = @import("termio/mailbox.zig");
+ pub const Exec = @import("termio/Exec.zig");
++pub const Headless = @import("termio/Headless.zig");
+ pub const Options = @import("termio/Options.zig");
+ pub const Termio = @import("termio/Termio.zig");
+ pub const Thread = @import("termio/Thread.zig");
+diff --git a/src/termio/Headless.zig b/src/termio/Headless.zig
+new file mode 100644
+index 0000000..3d21b28
+--- /dev/null
++++ b/src/termio/Headless.zig
+@@ -0,0 +1,122 @@
++//! Headless is a termio backend that owns no pty. Instead of running a
++//! subprocess, it forwards program output (writes) and resize events to C
++//! callbacks supplied via its `Config`. Everything else is a no-op.
++//!
++//! This backend is added as a `termio.Backend` variant but is not constructed
++//! anywhere yet, so it introduces no runtime behavior change.
++const Headless = @This();
++
++const std = @import("std");
++const Allocator = std.mem.Allocator;
++const renderer = @import("../renderer.zig");
++const terminal = @import("../terminal/main.zig");
++const termio = @import("../termio.zig");
++const ProcessInfo = @import("../pty.zig").ProcessInfo;
++
++/// Configuration carrying the C callback pointers. Bytes queued for the
++/// child are forwarded to `on_input`; grid resizes to `on_resize`.
++pub const Config = struct {
++    on_input: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++    on_resize: ?*const fn (?*anyopaque, u16, u16) callconv(.c) void = null,
++    userdata: ?*anyopaque = null,
++};
++
++/// Per-thread data for the headless backend. There is nothing to own.
++pub const ThreadData = struct {
++    pub fn deinit(self: *ThreadData, alloc: Allocator) void {
++        _ = self;
++        _ = alloc;
++    }
++
++    pub fn changeConfig(self: *ThreadData, config: *termio.DerivedConfig) void {
++        _ = self;
++        _ = config;
++    }
++};
++
++cfg: Config,
++
++pub fn init(cfg: Config) Headless {
++    return .{ .cfg = cfg };
++}
++
++pub fn deinit(self: *Headless) void {
++    _ = self;
++}
++
++pub fn initTerminal(self: *Headless, t: *terminal.Terminal) void {
++    _ = self;
++    _ = t;
++}
++
++pub fn threadEnter(
++    self: *Headless,
++    alloc: Allocator,
++    io: *termio.Termio,
++    td: *termio.Termio.ThreadData,
++) !void {
++    _ = self;
++    _ = alloc;
++    _ = io;
++    _ = td;
++}
++
++pub fn threadExit(self: *Headless, td: *termio.Termio.ThreadData) void {
++    _ = self;
++    _ = td;
++}
++
++pub fn focusGained(
++    self: *Headless,
++    td: *termio.Termio.ThreadData,
++    focused: bool,
++) !void {
++    _ = self;
++    _ = td;
++    _ = focused;
++}
++
++pub fn resize(
++    self: *Headless,
++    grid_size: renderer.GridSize,
++    screen_size: renderer.ScreenSize,
++) !void {
++    _ = screen_size;
++    if (self.cfg.on_resize) |cb| cb(
++        self.cfg.userdata,
++        @intCast(grid_size.columns),
++        @intCast(grid_size.rows),
++    );
++}
++
++pub fn queueWrite(
++    self: *Headless,
++    alloc: Allocator,
++    td: *termio.Termio.ThreadData,
++    data: []const u8,
++    linefeed: bool,
++) !void {
++    _ = alloc;
++    _ = td;
++    _ = linefeed;
++    if (self.cfg.on_input) |cb| cb(self.cfg.userdata, data.ptr, data.len);
++}
++
++pub fn childExitedAbnormally(
++    self: *Headless,
++    gpa: Allocator,
++    t: *terminal.Terminal,
++    exit_code: u32,
++    runtime_ms: u64,
++) !void {
++    _ = self;
++    _ = gpa;
++    _ = t;
++    _ = exit_code;
++    _ = runtime_ms;
++}
++
++pub fn getProcessInfo(self: *Headless, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
++    _ = self;
++    return null;
++}
+diff --git a/src/termio/backend.zig b/src/termio/backend.zig
+index c29009a..bda8f12 100644
+--- a/src/termio/backend.zig
++++ b/src/termio/backend.zig
+@@ -11,28 +11,34 @@ const ProcessInfo = @import("../pty.zig").ProcessInfo;
+ const WRITE_REQ_PREALLOC = std.math.pow(usize, 2, 5);
+ 
+ /// The kinds of backends.
+-pub const Kind = enum { exec };
++pub const Kind = enum { exec, headless };
+ 
+ /// Configuration for the various backend types.
+ pub const Config = union(Kind) {
+     /// Exec uses posix exec to run a command with a pty.
+     exec: termio.Exec.Config,
++
++    /// Headless owns no pty; it forwards writes/resizes to C callbacks.
++    headless: termio.Headless.Config,
+ };
+ 
+ /// Backend implementations. A backend is responsible for owning the pty
+ /// behavior and providing read/write capabilities.
+ pub const Backend = union(Kind) {
+     exec: termio.Exec,
++    headless: termio.Headless,
+ 
+     pub fn deinit(self: *Backend) void {
+         switch (self.*) {
+             .exec => |*exec| exec.deinit(),
++            .headless => |*h| h.deinit(),
+         }
+     }
+ 
+     pub fn initTerminal(self: *Backend, t: *terminal.Terminal) void {
+         switch (self.*) {
+             .exec => |*exec| exec.initTerminal(t),
++            .headless => |*h| h.initTerminal(t),
+         }
+     }
+ 
+@@ -44,12 +50,14 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.threadEnter(alloc, io, td),
++            .headless => |*h| try h.threadEnter(alloc, io, td),
+         }
+     }
+ 
+     pub fn threadExit(self: *Backend, td: *termio.Termio.ThreadData) void {
+         switch (self.*) {
+             .exec => |*exec| exec.threadExit(td),
++            .headless => |*h| h.threadExit(td),
+         }
+     }
+ 
+@@ -60,6 +68,7 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.focusGained(td, focused),
++            .headless => |*h| try h.focusGained(td, focused),
+         }
+     }
+ 
+@@ -70,6 +79,7 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.resize(grid_size, screen_size),
++            .headless => |*h| try h.resize(grid_size, screen_size),
+         }
+     }
+ 
+@@ -82,6 +92,7 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.queueWrite(alloc, td, data, linefeed),
++            .headless => |*h| try h.queueWrite(alloc, td, data, linefeed),
+         }
+     }
+ 
+@@ -99,6 +110,12 @@ pub const Backend = union(Kind) {
+                 exit_code,
+                 runtime_ms,
+             ),
++            .headless => |*h| try h.childExitedAbnormally(
++                gpa,
++                t,
++                exit_code,
++                runtime_ms,
++            ),
+         }
+     }
+ 
+@@ -108,6 +125,7 @@ pub const Backend = union(Kind) {
+     pub fn getProcessInfo(self: *Backend, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
+         return switch (self.*) {
+             .exec => |*exec| exec.getProcessInfo(info),
++            .headless => |*h| h.getProcessInfo(info),
+         };
+     }
+ };
+@@ -115,10 +133,12 @@ pub const Backend = union(Kind) {
+ /// Termio thread data. See termio.ThreadData for docs.
+ pub const ThreadData = union(Kind) {
+     exec: termio.Exec.ThreadData,
++    headless: termio.Headless.ThreadData,
+ 
+     pub fn deinit(self: *ThreadData, alloc: Allocator) void {
+         switch (self.*) {
+             .exec => |*exec| exec.deinit(alloc),
++            .headless => |*h| h.deinit(alloc),
+         }
+     }
+ 
