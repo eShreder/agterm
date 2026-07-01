@@ -896,3 +896,150 @@ tail); (2) surface-seed vs eager-deck mount ordering (seed synchronously in `cre
 before SwiftUI renders); (3) the leading-pane send-keys target depends on a `%layout-change`
 having arrived before the first keystroke (true in practice — tmux sends layout on window
 creation).
+
+---
+
+## Addendum: initial-attach window list (Tasks 7–8)
+
+**Why:** The Task-6 gate confirmed the transport/handshake/workspace/controller path works, but
+attaching to a tmux session with PRE-EXISTING windows created an EMPTY workspace — tmux does not
+send `%window-add` for windows that already exist at attach time; the client must query
+`list-windows` and parse the response block. `TmuxWindowList` (Task 1) was built for this but was
+never wired in. Tasks 7–8 close the gap so the core use case (attach → see your existing windows)
+works.
+
+### Task 7: `TmuxWindowList` returns layout + `TmuxCommand.listWindows`
+
+Extend the initial-window parser to also surface each window's layout string (needed to bind the
+leading pane so output routes), and add a `listWindows` outbound command. Host-free, TDD.
+
+**Files:**
+- Modify: `agtermCore/Sources/agtermCore/TmuxWindowList.swift`
+- Modify: `agtermCore/Tests/agtermCoreTests/TmuxWindowListTests.swift`
+- Modify: `agtermCore/Sources/agtermCore/TmuxCommand.swift`
+- Modify: `agtermCore/Tests/agtermCoreTests/TmuxCommandTests.swift`
+
+**Interfaces:**
+- Changes: `TmuxWindowList.parse(_:) -> [(id: TmuxWindowID, name: String, layout: String)]` (adds
+  `layout`, extracted from the `[layout <str>]` field of the default `list-windows` row).
+- Adds: `TmuxCommand.listWindows` case → encodes to `"list-windows"`.
+
+- [ ] **Step 1: Update the failing tests**
+
+In `TmuxWindowListTests.swift`, change the existing assertions to expect the layout too, e.g. for
+`"0: zsh- (1 panes) [80x24] [layout b25d,80x24,0,0,0] @0"`:
+```swift
+        #expect(result[0].id == TmuxWindowID("@0"))
+        #expect(result[0].name == "zsh")
+        #expect(result[0].layout == "b25d,80x24,0,0,0")
+```
+and for the multi-digit row (`[layout abcd,80x24,0,0,5]`): `#expect(r[0].layout == "abcd,80x24,0,0,5")`.
+For the garbage/no-id rows, still expect `[]`. In `TmuxCommandTests.swift` add:
+```swift
+    @Test func encodesListWindows() {
+        #expect(TmuxCommandEncoder.encode(.listWindows) == "list-windows")
+    }
+```
+
+- [ ] **Step 2: Run — expect FAIL**
+
+Run: `cd agtermCore && swift test --filter TmuxWindowListTests 2>&1 | tail -8` and
+`swift test --filter TmuxCommandTests 2>&1 | tail -8`. Expected: FAIL (tuple lacks `layout`;
+`.listWindows` undefined).
+
+- [ ] **Step 3: Implement**
+
+In `TmuxWindowList.parse`, after extracting id + name, also extract the layout: find the
+`[layout ` marker and take up to the next `]`:
+```swift
+            var layout = ""
+            if let lr = line.range(of: "[layout ") {
+                let after = line[lr.upperBound...]
+                if let close = after.firstIndex(of: "]") { layout = String(after[..<close]) }
+            }
+            result.append((TmuxWindowID(String(idToken)), name, layout))
+```
+Change the return type / tuple to `(id:name:layout:)`. In `TmuxCommand.swift` add `case listWindows`
+to the enum and `case .listWindows: return "list-windows"` to the encoder switch.
+
+- [ ] **Step 4: Run — expect PASS + full suite**
+
+Run: `cd agtermCore && swift test 2>&1 | tail -5`. Expected: all pass.
+
+- [ ] **Step 5: Lint + commit**
+
+```bash
+cd /Users/eshreder/projects/agterm
+make lint 2>&1 | tail -3
+git add agtermCore/Sources/agtermCore/TmuxWindowList.swift agtermCore/Tests/agtermCoreTests/TmuxWindowListTests.swift agtermCore/Sources/agtermCore/TmuxCommand.swift agtermCore/Tests/agtermCoreTests/TmuxCommandTests.swift
+git commit -m "agtermCore: TmuxWindowList surfaces layout; add list-windows command"
+```
+
+### Task 8: wire the initial window list into `TmuxController` + re-run the gate
+
+On handshake, request `list-windows`, collect the response block, and synthesize per-window
+`windowAdd`+`layoutChange`+`windowRenamed` so the existing effect path creates the sessions (with
+pane binding + name). App-target; verified by the re-run gate.
+
+**Files:**
+- Modify: `agterm/Tmux/TmuxController.swift`
+
+**Interfaces:**
+- Consumes: `TmuxWindowList` (now with layout), `TmuxCommand.listWindows`, the existing
+  `apply(_ effect:)`/`model.handle`/`pendingLeadingPane` machinery.
+
+- [ ] **Step 1: Collect block lines + request list-windows on handshake**
+
+Add controller state: `private var blockLines: [Int: [String]] = [:]` and
+`private var initializedWindows = false`. In `onHandshake()`, after closing the bootstrap session,
+`gateway?.send(.listWindows)`. In `apply(_ event:)`, accumulate block lines and process on end:
+```swift
+        switch event {
+        case .blockBegin(let num): blockLines[num] = []
+        case .blockLine(let num, let text): blockLines[num, default: []].append(text)
+        case .blockEnd(let num, _):
+            let lines = blockLines.removeValue(forKey: num) ?? []
+            if !initializedWindows {
+                let windows = TmuxWindowList.parse(lines)
+                if !windows.isEmpty {
+                    initializedWindows = true
+                    for w in windows { applyInitialWindow(w) }
+                }
+            }
+        default: break
+        }
+        // (keep the existing pendingLeadingPane recording + model.handle fold below)
+```
+(Integrate this with the existing `apply(_ event:)` body — do NOT drop the current leading-pane
+recording and `for effect in model.handle(event) { apply(effect) }`; the block cases are additive
+and those events already fold to `[]` in the model.)
+
+- [ ] **Step 2: Synthesize the initial windows through the effect path**
+
+```swift
+    private func applyInitialWindow(_ w: (id: TmuxWindowID, name: String, layout: String)) {
+        if let leading = TmuxLayout.panes(in: w.layout).panes.first { pendingLeadingPane[w.id] = leading }
+        for effect in model.handle(.windowAdd(w.id)) { apply(effect) }
+        for effect in model.handle(.layoutChange(window: w.id, layout: w.layout)) { apply(effect) }
+        if !w.name.isEmpty { for effect in model.handle(.windowRenamed(w.id, name: w.name)) { apply(effect) } }
+    }
+```
+Reset `initializedWindows = false` and clear `blockLines` in `teardownWorkspace()`.
+
+- [ ] **Step 3: Build + lint**
+
+Run: `make build 2>&1 | tail -6 && make lint 2>&1 | tail -3`. Expected: SUCCEEDED, clean.
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd /Users/eshreder/projects/agterm
+git add agterm/Tmux/TmuxController.swift
+git commit -m "app: TmuxController requests list-windows on attach to create existing windows"
+```
+
+- [ ] **Step 5: Re-run the Phase-3 gate (controller-run)**
+
+Re-run the Task-6 gate (local tmux with two windows → dev instance → `agtermctl tree`). Expected NOW:
+the `tmux: local` workspace contains TWO sessions (`zsh`/`second`), and `%output` renders. Quit by
+PID; do not touch the deployed app.
