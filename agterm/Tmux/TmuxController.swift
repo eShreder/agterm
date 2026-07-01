@@ -37,7 +37,13 @@ import agtermCore
     /// The display names of this connection's mirrored windows, for the control channel's `tmux.list`.
     /// A window with no manual/tmux name (`customName` nil) reports the `"window"` placeholder.
     func windowSummaries() -> [String] {
-        windowToSession.values.compactMap { store.session(withID: $0)?.customName ?? "window" }
+        // Sort by tmux window id so `tmux.list` output is stable/testable (dictionary order is otherwise
+        // undefined). Each surviving window maps through its session's manual/tmux name (`customName`),
+        // falling back to the `"window"` placeholder.
+        windowToSession.keys.sorted { $0.raw < $1.raw }.compactMap { window in
+            guard let sessionID = windowToSession[window] else { return nil }
+            return store.session(withID: sessionID)?.customName ?? "window"
+        }
     }
 
     /// Hard-kill the tmux SERVER-side session (`kill-session`, terminating every window), then tear down

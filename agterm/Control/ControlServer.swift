@@ -552,6 +552,21 @@ final class ControlServer {
                                                                     themes: actions.availableThemes()))
         case .restoreClear:
             return clearSavedCommands()
+        case .tmuxAttach:
+            guard let host = request.args?.host else {
+                return ControlResponse(ok: false, error: "tmux.attach requires a host")
+            }
+            actions.attachTmux(host: host, sessionName: request.args?.name ?? "main")
+            return ControlResponse(ok: true)
+        case .tmuxDetach:
+            actions.detachTmux(connectionID: request.target)
+            return ControlResponse(ok: true)
+        case .tmuxKill:
+            actions.killTmux(connectionID: request.target)
+            return ControlResponse(ok: true)
+        case .tmuxList:
+            let nodes = actions.listTmux().map { ControlTmuxNode(id: $0.id, host: $0.host, windows: $0.windows) }
+            return ControlResponse(ok: true, result: ControlResult(tmuxConnections: nodes))
         }
     }
 
