@@ -1065,7 +1065,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
             guard let node, !cancelled else { return }
 
             switch node.kind {
-            case .session: store.renameSession(node.id, to: newValue)
+            case .session: actions.renameSession(node.id, to: newValue)
             case .workspace: store.renameWorkspace(node.id, to: newValue)
             }
         }
@@ -1197,7 +1197,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         @objc private func menuClose(_ sender: NSMenuItem) {
             guard let node = sender.representedObject as? SidebarNode else { return }
-            store.closeSession(node.id)
+            actions.closeSession(node.id)
         }
 
         @objc private func menuClearStatus(_ sender: NSMenuItem) {

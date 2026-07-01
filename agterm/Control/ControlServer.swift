@@ -410,16 +410,16 @@ final class ControlServer {
                 }
             }
         case .sessionClose:
-            return resolveSession(request.target, window: request.args?.window) { store, id in
-                store.closeSession(id)
+            return resolveSession(request.target, window: request.args?.window) { _, id in
+                actions.closeSession(id)
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
         case .sessionRename:
             guard let name = request.args?.name else {
                 return ControlResponse(ok: false, error: "session.rename requires a name")
             }
-            return resolveSession(request.target, window: request.args?.window) { store, id in
-                store.renameSession(id, to: name)
+            return resolveSession(request.target, window: request.args?.window) { _, id in
+                actions.renameSession(id, to: name)
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
         case .sessionMove:

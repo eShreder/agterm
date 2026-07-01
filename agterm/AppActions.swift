@@ -105,9 +105,41 @@ final class AppActions {
         guard let store, let session = store.activeSession else { return false }
         if session.overlayActive { store.closeOverlay(session.id); return true }
         if session.scratchActive { store.toggleScratch(session.id); return true }
-        store.closeSession(session.id)
+        closeSession(session.id)
         focusActiveSession()
         return true
+    }
+
+    /// Rename a session — backend-aware. A tmux-backed session (`tmuxBinding != nil`) routes to its
+    /// owning `TmuxController` (`rename-window`), so the rename round-trips to the remote tmux and the
+    /// local name follows via the `%window-renamed` echo (which calls `store.renameSession` DIRECTLY —
+    /// NOT this wrapper — so there is no rename→remote→echo→remote loop). A normal session renames
+    /// locally. Shared by the GUI inline-rename, the palette, and the `session.rename` control arm.
+    func renameSession(_ id: UUID, to name: String) {
+        guard let store else { return }
+        if store.session(withID: id)?.tmuxBinding != nil, let controller = tmuxControllerOwning(id) {
+            _ = controller.renameWindow(session: id, to: name); return
+        }
+        store.renameSession(id, to: name)
+    }
+
+    /// Close a session — backend-aware. A tmux-backed session routes to its owning `TmuxController`
+    /// (`kill-window`), so the close round-trips to the remote tmux and the local session is torn down
+    /// via the `%window-close` echo (which calls `store.closeSession` DIRECTLY — NOT this wrapper — so
+    /// there is no close→remote→echo→remote loop). A normal session closes locally. Shared by
+    /// `closeActiveSession`, the sidebar context menu, and the `session.close` control arm.
+    func closeSession(_ id: UUID) {
+        guard let store else { return }
+        if store.session(withID: id)?.tmuxBinding != nil, let controller = tmuxControllerOwning(id) {
+            _ = controller.killWindow(session: id); return
+        }
+        store.closeSession(id)
+    }
+
+    /// The `TmuxController` that owns `sessionID` (has a live tmux window mapped to it), or nil for a
+    /// normal (non-tmux) session — the resolver behind the backend-aware `renameSession`/`closeSession`.
+    private func tmuxControllerOwning(_ sessionID: UUID) -> TmuxController? {
+        tmuxControllers.values.first { $0.owns(session: sessionID) }
     }
 
     /// Clear the active session's agent-status indicator back to idle (the same effect as `agtermctl
