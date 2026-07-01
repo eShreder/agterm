@@ -150,6 +150,16 @@ Two simpler routes fail and are why the overlay is needed: emitting graphics esc
 tool stdout (the harness escapes the control bytes) and running an image viewer in the agent's tool
 shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage.
 
+## tmux
+
+- `tmux attach <host> [--session NAME] [--workspace NAME]` — spawn `ssh <host> tmux -CC …`; each tmux
+  window becomes an agterm session in a `tmux: <host>` workspace. No splits (a split window shows its
+  leading pane).
+- `tmux detach <id>` — soft detach (`detach-client`); the local workspace is removed, the remote tmux
+  session persists for reattach. `<id>` is the connection/workspace id from `tmux list`.
+- `tmux kill <id>` — hard `kill-session` on the remote; the tmux session is destroyed.
+- `tmux list` — active tmux connections: `id`, `host`, window names.
+
 ## window
 
 - `window new [name]` — create and open a window; returns its id.

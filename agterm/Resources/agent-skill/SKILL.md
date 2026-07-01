@@ -88,7 +88,7 @@ a global `--window <id|prefix|active>` to operate on a specific window's tree (d
 
 Scripts rarely type ids: create with `*.new` (capture the returned id), or act on `active`.
 
-## Command summary (46 commands)
+## Command summary (50 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -124,6 +124,10 @@ via `session status`: `active`|`completed`|`blocked`, omitted when idle).
   `overlay result` — run a program on top of a session; `--block` waits and exits with its status. An
   overlay is a real terminal (pty), which is also how you **display an image inline** — via the bundled
   `scripts/show-image.sh` (see below).
+
+**tmux**
+- `attach <host> [--session NAME] [--workspace NAME]` — start an ssh + `tmux -CC` connection; its windows become native sessions.
+- `detach <id>` — detach (the tmux session survives on the server). · `kill <id>` — hard `kill-session`. · `list` — active connections + their windows.
 
 **window** — `new [name]` · `list` · `select <id>` · `close <id>` · `rename <id> <name>` ·
 `delete <id>` · `resize <id> --width W --height H` · `move <id> --x X --y Y [--display N]`.
