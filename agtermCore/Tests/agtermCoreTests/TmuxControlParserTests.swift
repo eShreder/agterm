@@ -38,4 +38,59 @@ struct TmuxControlParserTests {
         let events = p.feed(line)
         #expect(events == [.output(pane: TmuxPaneID("%0"), bytes: [0xC3, 0xA9])])
     }
+
+    @Test func classifiesStructuralNotifications() {
+        var p = TmuxControlParser()
+        let feed = Array("""
+        %session-changed $0 cap\r
+        %window-add @2\r
+        %window-renamed @0 renamed0\r
+        %window-pane-changed @0 %2\r
+        %session-window-changed $0 @0\r
+        %unlinked-window-close @1\r
+        %sessions-changed\r
+        %exit\r
+
+        """.utf8)   // trailing blank line ensures the final \n
+        let e = p.feed(feed)
+        #expect(e == [
+            .sessionChanged(TmuxSessionID("$0"), name: "cap"),
+            .windowAdd(TmuxWindowID("@2")),
+            .windowRenamed(TmuxWindowID("@0"), name: "renamed0"),
+            .windowPaneChanged(window: TmuxWindowID("@0"), pane: TmuxPaneID("%2")),
+            .sessionWindowChanged(TmuxSessionID("$0"), window: TmuxWindowID("@0")),
+            .windowClose(TmuxWindowID("@1"), unlinked: true),
+            .sessionsChanged,
+            .exit(reason: nil),
+        ])
+    }
+
+    @Test func parsesLayoutChangeKeepingLayoutString() {
+        var p = TmuxControlParser()
+        let line = Array("%layout-change @0 0206,80x24,0,0{40x24,0,0,0,39x24,41,0,2} 0206,80x24,0,0{40x24,0,0,0,39x24,41,0,2} -\r\n".utf8)
+        #expect(p.feed(line) == [.layoutChange(window: TmuxWindowID("@0"),
+                                               layout: "0206,80x24,0,0{40x24,0,0,0,39x24,41,0,2}")])
+    }
+
+    @Test func tracksBeginEndBlockBodyLines() {
+        var p = TmuxControlParser()
+        let feed = Array("""
+        %begin 1782913918 294 1\r
+        0: zsh- (1 panes) [80x24] [layout b25d,80x24,0,0,0] @0\r
+        1: second* (1 panes) [80x24] [layout b25e,80x24,0,0,1] @1 (active)\r
+        %end 1782913918 294 1\r
+
+        """.utf8)
+        #expect(p.feed(feed) == [
+            .blockBegin(num: 294),
+            .blockLine(num: 294, text: "0: zsh- (1 panes) [80x24] [layout b25d,80x24,0,0,0] @0"),
+            .blockLine(num: 294, text: "1: second* (1 panes) [80x24] [layout b25e,80x24,0,0,1] @1 (active)"),
+            .blockEnd(num: 294, error: false),
+        ])
+    }
+
+    @Test func unknownPercentLineIsIgnoredGracefully() {
+        var p = TmuxControlParser()
+        #expect(p.feed(Array("%some-future-thing x y\r\n".utf8)) == [.unknown("%some-future-thing x y")])
+    }
 }
