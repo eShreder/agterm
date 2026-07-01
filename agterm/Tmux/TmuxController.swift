@@ -27,6 +27,9 @@ import agtermCore
     private var bootstrapSessionID: UUID?
     private var blockLines: [Int: [String]] = [:]
     private var initializedWindows = false
+    /// Windows awaiting their `capture-pane` reply, in send order — tmux answers commands in order,
+    /// so each subsequent reply block after the initial captures maps to the front of this queue.
+    private var pendingCaptureWindows: [TmuxWindowID] = []
 
     /// The connection's target host: the ssh host for `attach`, `"local"` for `attachLocal`. Set at the
     /// top of the attach path (before spawning). Exposed via `AppActions.listTmux` for the control channel.
@@ -128,11 +131,23 @@ import agtermCore
         case .blockLine(let num, let text): blockLines[num, default: []].append(text)
         case .blockEnd(let num, _):
             let lines = blockLines.removeValue(forKey: num) ?? []
-            if !initializedWindows {
+            if let window = pendingCaptureWindows.first {
+                // A `capture-pane` reply (requested right after the initial windows were created).
+                pendingCaptureWindows.removeFirst()
+                paintCapturedContent(window: window, lines: lines)
+            } else if !initializedWindows {
                 let windows = TmuxWindowList.parse(lines)
                 if !windows.isEmpty {
                     initializedWindows = true
                     for w in windows { applyInitialWindow(w) }
+                    // tmux sends no content for pre-existing windows on attach — capture each
+                    // window's leading pane once so its surface paints instead of staying blank.
+                    for w in windows {
+                        if let pane = pendingLeadingPane[w.id] {
+                            gateway?.send(.capturePane(pane))
+                            pendingCaptureWindows.append(w.id)
+                        }
+                    }
                 }
             }
         default: break
@@ -154,6 +169,21 @@ import agtermCore
         for effect in model.handle(.windowAdd(w.id)) { apply(effect) }
         for effect in model.handle(.layoutChange(window: w.id, layout: w.layout)) { apply(effect) }
         if !w.name.isEmpty { for effect in model.handle(.windowRenamed(w.id, name: w.name)) { apply(effect) } }
+    }
+
+    /// Paint a window's captured current content (the `capture-pane` reply — grid rows with colors)
+    /// into its surface. tmux sends no content for a pre-existing window on attach, so without this
+    /// the surface stays blank until some live `%output` (or a resize-driven redraw) arrives — which
+    /// is why most windows looked empty and a resize / Ctrl-L "fixed" them. Clear + home first so the
+    /// paint is clean; drop trailing blank rows so the cursor lands near the prompt, not the grid
+    /// bottom. Buffered by `GhosttySurfaceView` if the surface hasn't mounted yet.
+    private func paintCapturedContent(window: TmuxWindowID, lines: [String]) {
+        guard let id = windowToSession[window], let session = store.session(withID: id),
+              let view = session.surface as? GhosttySurfaceView else { return }
+        var rows = lines
+        while let last = rows.last, last.trimmingCharacters(in: .whitespaces).isEmpty { rows.removeLast() }
+        guard !rows.isEmpty else { return }
+        view.writeOutput(Data(("\u{1b}[2J\u{1b}[H" + rows.joined(separator: "\r\n")).utf8))
     }
 
     private func apply(_ effect: TmuxModelEffect) {
@@ -275,6 +305,7 @@ import agtermCore
         windowToSession.removeAll()
         pendingLeadingPane.removeAll()
         blockLines.removeAll()
+        pendingCaptureWindows.removeAll()
         initializedWindows = false
         gateway?.stop()
         gateway = nil

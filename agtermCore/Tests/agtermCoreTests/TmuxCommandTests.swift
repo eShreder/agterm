@@ -21,6 +21,11 @@ struct TmuxCommandTests {
         #expect(TmuxCommandEncoder.encode(.listWindows) == "list-windows")
     }
 
+    @Test func encodesCapturePane() {
+        #expect(TmuxCommandEncoder.encode(.capturePane(TmuxPaneID("%0"))) == "capture-pane -p -e -t %0")
+        #expect(TmuxCommandEncoder.encode(.capturePane(TmuxPaneID("%12"))) == "capture-pane -p -e -t %12")
+    }
+
     @Test func encodesKillSession() {
         #expect(TmuxCommandEncoder.encode(.killSession) == "kill-session")
     }

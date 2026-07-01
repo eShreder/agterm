@@ -9,6 +9,10 @@ public enum TmuxCommand: Equatable, Sendable {
     case detachClient
     case listWindows
     case killSession
+    /// Dump a pane's CURRENT visible content (with colors) — tmux sends no content for existing
+    /// windows on attach, only future `%output`, so the controller captures each window's leading
+    /// pane once to paint it. The reply arrives as a `%begin`/`%end` block of grid rows.
+    case capturePane(TmuxPaneID)
 }
 
 public enum TmuxCommandEncoder {
@@ -40,6 +44,9 @@ public enum TmuxCommandEncoder {
             return "list-windows"
         case .killSession:
             return "kill-session"
+        case .capturePane(let pane):
+            // -p prints to the control block, -e keeps SGR/colors so the paint matches the pane.
+            return "capture-pane -p -e -t \(pane.raw)"
         }
     }
 }
