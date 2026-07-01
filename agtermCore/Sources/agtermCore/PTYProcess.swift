@@ -74,9 +74,14 @@ public final class PTYProcess: @unchecked Sendable {
         let rs = DispatchSource.makeReadSource(fileDescriptor: primary, queue: queue)
         // The cancel handler is the SOLE owner of the fd close — every teardown path
         // (EOF/error, terminate(), child exit, deinit) routes through cancel(), so the
-        // fd is closed exactly once and never while the source still monitors it.
-        rs.setCancelHandler { [weak self] in
-            guard let self else { return }
+        // fd is closed exactly once and never while the source still monitors it. It
+        // captures `self` STRONGLY on purpose: this keeps the PTYProcess alive until the
+        // fd is actually closed, even if the owner releases its last reference the instant
+        // after calling terminate() (a weak capture would see nil and leak the fd). The
+        // resulting retain cycle self-breaks when libdispatch releases the handler after
+        // cancellation completes; the owner MUST call terminate() (or the child must exit)
+        // for that to happen — the controller always does on teardown.
+        rs.setCancelHandler { [self] in
             if self.primaryFD >= 0 { close(self.primaryFD); self.primaryFD = -1 }
         }
         rs.setEventHandler { [weak self] in
@@ -112,20 +117,22 @@ public final class PTYProcess: @unchecked Sendable {
     }
 
     /// Send SIGTERM to the child and tear down the sources. The primary fd is closed by
-    /// the read source's cancel handler — never directly here (closing a monitored fd is
-    /// libdispatch UB).
+    /// the read source's cancel handler (which strong-captures self) — never directly here
+    /// (closing a monitored fd is libdispatch UB). `cancel()` is thread-safe and is called
+    /// synchronously here, NOT via a `[weak self]` queue hop: the owner often releases the
+    /// PTYProcess immediately after `terminate()`, and a weak hop would deallocate self
+    /// before the cancel ran, leaking the fd. `pid`/`readSource`/`procSource` are set once
+    /// in `start()` and never mutated after, so reading them off-queue is safe.
     public func terminate() {
-        queue.async { [weak self] in
-            guard let self else { return }
-            if self.pid > 0 { kill(self.pid, SIGTERM) }
-            self.readSource?.cancel()   // cancel handler owns the fd close
-            self.procSource?.cancel()
-        }
+        if pid > 0 { kill(pid, SIGTERM) }
+        readSource?.cancel()   // strong-capture cancel handler closes the fd, keeping self alive until then
+        procSource?.cancel()
     }
 
     deinit {
-        // Synchronous and self-free: capturing self from a deallocating object is UB, so
-        // touch only the retained sources/pid directly (no queue.async { self... }).
+        // With the strong-capture cancel handler, deinit runs only AFTER cancellation has
+        // completed (that handler held the last reference until then), so the fd is already
+        // closed and these cancels are no-ops. Kept as a defensive backstop; stays self-free.
         readSource?.cancel()
         procSource?.cancel()
         if pid > 0 { kill(pid, SIGTERM) }
