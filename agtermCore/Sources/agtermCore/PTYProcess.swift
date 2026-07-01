@@ -9,6 +9,10 @@ import Darwin
 /// `@unchecked Sendable`: it owns an fd + a `DispatchSourceRead`; all mutation is
 /// serialized on its own queue. Callbacks fire on that background queue — the CONSUMER
 /// is responsible for hopping to the main actor.
+///
+/// - Important: `start()` must be called (and return) before any concurrent `write`/
+///   `terminate`. `start()` publishes the fd/pid/sources via the source `resume()`
+///   barrier; steady-state mutation thereafter is confined to the private queue.
 public final class PTYProcess: @unchecked Sendable {
     private var primaryFD: Int32 = -1
     private var pid: pid_t = -1
@@ -21,7 +25,7 @@ public final class PTYProcess: @unchecked Sendable {
     /// Spawn `path` with `args` (argv[0] is set by the caller, conventionally `path`) and
     /// `env`. `onData` is called on a background queue with each chunk read from the pty
     /// primary. `onExit` is called once with the child's wait status when it exits.
-    /// Throws on open/spawn failure.
+    /// Throws on open/spawn failure. Must be called before any concurrent `write`/`terminate`.
     public func start(path: String, args: [String], env: [String: String],
                       onData: @escaping (Data) -> Void, onExit: @escaping (Int32) -> Void) throws {
         let primary = posix_openpt(O_RDWR | O_NOCTTY)
@@ -58,11 +62,19 @@ public final class PTYProcess: @unchecked Sendable {
         self.pid = childPID
 
         let rs = DispatchSource.makeReadSource(fileDescriptor: primary, queue: queue)
+        // The cancel handler is the SOLE owner of the fd close — every teardown path
+        // (EOF/error, terminate(), child exit, deinit) routes through cancel(), so the
+        // fd is closed exactly once and never while the source still monitors it.
+        rs.setCancelHandler { [weak self] in
+            guard let self else { return }
+            if self.primaryFD >= 0 { close(self.primaryFD); self.primaryFD = -1 }
+        }
         rs.setEventHandler { [weak self] in
             guard let self else { return }
             var buf = [UInt8](repeating: 0, count: 65536)
             let n = read(self.primaryFD, &buf, buf.count)
-            if n > 0 { onData(Data(buf[0..<n])) }
+            // EOF (0) or error (<0): cancel -> fd closed by cancel handler.
+            if n > 0 { onData(Data(buf[0..<n])) } else { rs.cancel() }
         }
         rs.resume()
         self.readSource = rs
@@ -72,7 +84,7 @@ public final class PTYProcess: @unchecked Sendable {
             var status: Int32 = 0
             waitpid(childPID, &status, 0)
             onExit(status)
-            self?.readSource?.cancel()
+            self?.readSource?.cancel()   // closes the primary fd via the read source's cancel handler
             self?.procSource?.cancel()
         }
         ps.resume()
@@ -89,13 +101,24 @@ public final class PTYProcess: @unchecked Sendable {
         }
     }
 
-    /// Send SIGTERM to the child and close the primary fd.
+    /// Send SIGTERM to the child and tear down the sources. The primary fd is closed by
+    /// the read source's cancel handler — never directly here (closing a monitored fd is
+    /// libdispatch UB).
     public func terminate() {
         queue.async { [weak self] in
             guard let self else { return }
             if self.pid > 0 { kill(self.pid, SIGTERM) }
-            if self.primaryFD >= 0 { close(self.primaryFD); self.primaryFD = -1 }
+            self.readSource?.cancel()   // cancel handler owns the fd close
+            self.procSource?.cancel()
         }
+    }
+
+    deinit {
+        // Synchronous and self-free: capturing self from a deallocating object is UB, so
+        // touch only the retained sources/pid directly (no queue.async { self... }).
+        readSource?.cancel()
+        procSource?.cancel()
+        if pid > 0 { kill(pid, SIGTERM) }
     }
 }
 
