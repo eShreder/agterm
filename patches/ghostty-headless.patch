@@ -1,8 +1,65 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index b099741..51517b6 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -476,6 +476,10 @@ typedef struct {
+   size_t env_var_count;
+   const char* initial_input;
+   bool wait_after_command;
++  bool headless;
++  void (*on_input)(void*, const char*, uintptr_t);
++  void (*on_resize)(void*, uint16_t, uint16_t);
++  void* headless_userdata;
+   ghostty_surface_context_e context;
+ } ghostty_surface_config_s;
+ 
+@@ -1125,6 +1129,7 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
+                                                    ghostty_input_key_s,
+                                                    ghostty_binding_flags_e*);
+ GHOSTTY_API void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
++GHOSTTY_API void ghostty_surface_write_output(ghostty_surface_t, const char*, uintptr_t);
+ GHOSTTY_API void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
+ GHOSTTY_API bool ghostty_surface_mouse_captured(ghostty_surface_t);
+ GHOSTTY_API bool ghostty_surface_mouse_button(ghostty_surface_t,
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 5d16f33..a0b8daa 100644
+index 5d16f33..5cfaa9d 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -1314,6 +1314,8 @@ fn childExitedAbnormally(
+@@ -636,7 +636,32 @@ pub fn init(
+     // Start our IO implementation
+     // This separate block ({}) is important because our errdefers must
+     // be scoped here to be valid.
+-    {
++    //
++    // Headless surfaces (embedded apprt only) own no PTY/subprocess: their
++    // termio uses the `headless` backend, which forwards terminal writes and
++    // resizes to the C callbacks carried on the apprt surface. Every other
++    // surface spawns a subprocess via the `exec` backend in the else branch
++    // (unchanged from the non-headless path).
++    if (headless: {
++        if (@hasField(@TypeOf(rt_surface.*), "headless")) break :headless rt_surface.headless;
++        break :headless @as(?termio.Headless.Config, null);
++    }) |headless_config| {
++        // Initialize our IO mailbox
++        var io_mailbox = try termio.Mailbox.initSPSC(alloc);
++        errdefer io_mailbox.deinit(alloc);
++
++        try termio.Termio.init(&self.io, alloc, .{
++            .size = size,
++            .full_config = config,
++            .config = try termio.Termio.DerivedConfig.init(alloc, config),
++            .backend = .{ .headless = termio.Headless.init(headless_config) },
++            .mailbox = io_mailbox,
++            .renderer_state = &self.renderer_state,
++            .renderer_wakeup = render_thread.wakeup,
++            .renderer_mailbox = render_thread.mailbox,
++            .surface_mailbox = .{ .surface = self, .app = app_mailbox },
++        });
++    } else {
+         var env = rt_surface.defaultTermioEnv() catch |err| env: {
+             // If an error occurs, we don't want to block surface startup.
+             log.warn("error getting env map for surface err={}", .{err});
+@@ -1314,6 +1339,8 @@ fn childExitedAbnormally(
      // Build up our command for the error message
      const command = try std.mem.join(alloc, " ", switch (self.io.backend) {
          .exec => |*exec| exec.subprocess.args,
@@ -11,6 +68,129 @@ index 5d16f33..a0b8daa 100644
      });
      const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
  
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 730913e..81561e8 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -14,6 +14,7 @@ const font = @import("../font/main.zig");
+ const input = @import("../input.zig");
+ const internal_os = @import("../os/main.zig");
+ const renderer = @import("../renderer.zig");
++const termio = @import("../termio.zig");
+ const terminal = @import("../terminal/main.zig");
+ const CoreApp = @import("../App.zig");
+ const CoreInspector = @import("../inspector/main.zig").Inspector;
+@@ -420,6 +421,13 @@ pub const Surface = struct {
+     /// that getTitle works without the implementer needing to save it.
+     title: ?[:0]const u8 = null,
+ 
++    /// When non-null, this surface is headless: it owns no PTY/subprocess and
++    /// its termio uses the `headless` backend, forwarding terminal writes to
++    /// the `on_input`/`on_resize` C callbacks. Set from the headless
++    /// `Surface.Options` fields in `init`; read by `CoreSurface.init` (via
++    /// `rt_surface`) to select the termio backend. `null` = normal exec surface.
++    headless: ?termio.Headless.Config = null,
++
+     /// Surface initialization options.
+     pub const Options = extern struct {
+         /// The platform that this surface is being initialized for and
+@@ -459,6 +467,26 @@ pub const Surface = struct {
+         /// Wait after the command exits
+         wait_after_command: bool = false,
+ 
++        /// When true, create a headless surface: no PTY/subprocess is spawned
++        /// and the termio uses the `headless` backend. Terminal writes are
++        /// forwarded to `on_input` and resizes to `on_resize`. The
++        /// `command`/`wait_after_command` fields are ignored for headless
++        /// surfaces. Defaults to false so existing callers are unaffected.
++        headless: bool = false,
++
++        /// Called (on the IO thread) with bytes the terminal wants to write to
++        /// its input (what would normally go to the PTY). Only used when
++        /// `headless` is true. The pointer/len are only valid for the duration
++        /// of the call.
++        on_input: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
++
++        /// Called (on the IO thread) with the new grid size (columns, rows) when
++        /// a headless surface is resized. Only used when `headless` is true.
++        on_resize: ?*const fn (?*anyopaque, u16, u16) callconv(.c) void = null,
++
++        /// Opaque userdata passed as the first argument to `on_input`/`on_resize`.
++        headless_userdata: ?*anyopaque = null,
++
+         /// Context for the new surface
+         context: apprt.surface.NewSurfaceContext = .window,
+     };
+@@ -475,6 +503,11 @@ pub const Surface = struct {
+             },
+             .size = .{ .width = 800, .height = 600 },
+             .cursor_pos = .{ .x = -1, .y = -1 },
++            .headless = if (opts.headless) .{
++                .on_input = opts.on_input,
++                .on_resize = opts.on_resize,
++                .userdata = opts.headless_userdata,
++            } else null,
+         };
+ 
+         // Add ourselves to the list of surfaces on the app.
+@@ -526,12 +559,16 @@ pub const Surface = struct {
+             }
+         }
+ 
+-        // If we have a command from the options then we set it.
+-        if (opts.command) |c_command| {
+-            const cmd = std.mem.sliceTo(c_command, 0);
+-            if (cmd.len > 0) {
+-                config.command = .{ .shell = cmd };
+-                config.@"wait-after-command" = true;
++        // If we have a command from the options then we set it. Headless
++        // surfaces own no PTY/subprocess, so command/wait-after-command are
++        // meaningless for them and are skipped.
++        if (!opts.headless) {
++            if (opts.command) |c_command| {
++                const cmd = std.mem.sliceTo(c_command, 0);
++                if (cmd.len > 0) {
++                    config.command = .{ .shell = cmd };
++                    config.@"wait-after-command" = true;
++                }
+             }
+         }
+ 
+@@ -569,8 +606,8 @@ pub const Surface = struct {
+             );
+         }
+ 
+-        // Wait after command
+-        if (opts.wait_after_command) {
++        // Wait after command (exec surfaces only; headless owns no subprocess).
++        if (!opts.headless and opts.wait_after_command) {
+             config.@"wait-after-command" = true;
+         }
+ 
+@@ -1822,6 +1859,23 @@ pub const CAPI = struct {
+         surface.textCallback(ptr[0..len]);
+     }
+ 
++    /// Feed external output bytes directly into a (typically headless) surface's
++    /// terminal parser, as if they had been read from a PTY. The bytes are
++    /// heap-copied into an owned `external_output` message and queued on the
++    /// surface's IO, which drains it via `processOutput`. Used to inject output
++    /// produced by an external source (e.g. tmux `%output`).
++    export fn ghostty_surface_write_output(
++        surface: *Surface,
++        ptr: [*]const u8,
++        len: usize,
++    ) void {
++        const msg = termio.Message.externalOutput(
++            surface.app.core_app.alloc,
++            ptr[0..len],
++        ) catch return;
++        surface.core_surface.io.queueMessage(msg, .unlocked);
++    }
++
+     /// Set the preedit text for the surface. This is used for IME
+     /// composition. If the length is 0, then the preedit text is cleared.
+     export fn ghostty_surface_preedit(
 diff --git a/src/termio.zig b/src/termio.zig
 index b168851..b0ddea9 100644
 --- a/src/termio.zig
