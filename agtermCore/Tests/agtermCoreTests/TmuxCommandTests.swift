@@ -13,6 +13,10 @@ struct TmuxCommandTests {
         #expect(TmuxCommandEncoder.encode(.listWindows) == "list-windows")
     }
 
+    @Test func encodesKillSession() {
+        #expect(TmuxCommandEncoder.encode(.killSession) == "kill-session")
+    }
+
     @Test func encodesResizeAndDetach() {
         #expect(TmuxCommandEncoder.encode(.resizeClient(cols: 80, rows: 24)) == "refresh-client -C 80x24")
         #expect(TmuxCommandEncoder.encode(.detachClient) == "detach-client")

@@ -147,6 +147,44 @@ final class AppActions {
         tmuxController(for: store).attachLocal(sessionName: sessionName)
     }
 
+    /// Detach the tmux connection whose workspace uuid matches `connectionID` (nil = the first live
+    /// connection, so a bare `tmux.detach` acts on the only one). Sends `detach-client` and tears down
+    /// the local workspace, leaving the tmux session running server-side. No-op when nothing matches.
+    func detachTmux(connectionID: String?) {
+        for controller in tmuxControllers.values where matches(controller, connectionID) {
+            controller.detach()
+            return
+        }
+    }
+
+    /// Hard-kill the tmux connection whose workspace uuid matches `connectionID` (nil = the first live
+    /// connection). Sends `kill-session` (terminating the server-side session and every window) and tears
+    /// down the local workspace. No-op when nothing matches.
+    func killTmux(connectionID: String?) {
+        for controller in tmuxControllers.values where matches(controller, connectionID) {
+            controller.kill()
+            return
+        }
+    }
+
+    /// The live tmux connections for the control channel's `tmux.list`: each attached controller mapped to
+    /// its workspace uuid, target host, and window display names. Controllers with no live workspace
+    /// (never attached / torn down) are skipped.
+    func listTmux() -> [(id: String, host: String, windows: [String])] {
+        tmuxControllers.values.compactMap { controller in
+            guard let wid = controller.connectionWorkspaceID else { return nil }
+            return (wid.uuidString, controller.host, controller.windowSummaries())
+        }
+    }
+
+    /// Whether a controller matches a `tmux.detach/kill` selector: a nil id matches ANY live connection
+    /// (the single-connection convenience), else the id must equal the controller's workspace uuid string.
+    /// A controller with no live workspace never matches.
+    private func matches(_ controller: TmuxController, _ id: String?) -> Bool {
+        guard let wid = controller.connectionWorkspaceID else { return false }
+        return id == nil || id == wid.uuidString
+    }
+
     /// Re-read and re-parse `keymap.conf`, re-rendering the data-driven menu shortcuts and rebuilding
     /// the custom-command runner + the palette's custom items. Shared by the View menu item, the
     /// action palette, and the control channel (`keymap.reload`). No-op before the scene wires the

@@ -8,6 +8,7 @@ public enum TmuxCommand: Equatable, Sendable {
     case resizeClient(cols: Int, rows: Int)
     case detachClient
     case listWindows
+    case killSession
 }
 
 public enum TmuxCommandEncoder {
@@ -28,6 +29,8 @@ public enum TmuxCommandEncoder {
             return "detach-client"
         case .listWindows:
             return "list-windows"
+        case .killSession:
+            return "kill-session"
         }
     }
 }

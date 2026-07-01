@@ -26,6 +26,27 @@ import agtermCore
     private var blockLines: [Int: [String]] = [:]
     private var initializedWindows = false
 
+    /// The connection's target host: the ssh host for `attach`, `"local"` for `attachLocal`. Set at the
+    /// top of the attach path (before spawning). Exposed via `AppActions.listTmux` for the control channel.
+    private(set) var host: String = ""
+
+    /// The id of the workspace this connection mirrors into, or nil before an attach / after teardown.
+    /// Exposes the private `workspaceID` so `AppActions` can address the connection by workspace uuid.
+    var connectionWorkspaceID: UUID? { workspaceID }
+
+    /// The display names of this connection's mirrored windows, for the control channel's `tmux.list`.
+    /// A window with no manual/tmux name (`customName` nil) reports the `"window"` placeholder.
+    func windowSummaries() -> [String] {
+        windowToSession.values.compactMap { store.session(withID: $0)?.customName ?? "window" }
+    }
+
+    /// Hard-kill the tmux SERVER-side session (`kill-session`, terminating every window), then tear down
+    /// the local workspace/gateway. Distinct from `detach`, which leaves the tmux session running.
+    func kill() {
+        gateway?.send(.killSession)
+        teardownWorkspace()
+    }
+
     init(store: AppStore) { self.store = store }
 
     deinit { gateway?.stop() }
@@ -37,6 +58,7 @@ import agtermCore
         // `stop()`ped (a bare reassign would leak its pty fd / orphan the child) before the new
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
+        self.host = host
         workspaceID = store.addWorkspace(name: "tmux: \(host)").id
         let remote = "tmux -CC new -A -s \(sessionName)"
         startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
@@ -55,6 +77,7 @@ import agtermCore
         // `stop()`ped (a bare reassign would leak its pty fd / orphan the child) before the new
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
+        self.host = "local"
         workspaceID = store.addWorkspace(name: "tmux: local").id
         let env = ProcessInfo.processInfo.environment
         let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"
