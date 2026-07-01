@@ -146,6 +146,23 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// recreate a surface (e.g. from a stray viewDidMoveToWindow).
     private var isDestroyed = false
 
+    /// DEV-ONLY (the `AGTERM_HEADLESS_HARNESS` gate, see `HeadlessHarness`): when true this surface is
+    /// created PTY-less (`config.headless = true`, no `command`/`working_directory` shell spawn) and its
+    /// input is delivered to `headlessOnInput` via the libghostty `on_input` callback instead of a pty.
+    /// Set by `makeHeadless(onInput:)` BEFORE the view attaches to a window; `createSurface` branches on
+    /// it so the normal (non-harness) launch path is completely unaffected (flag stays false). This is the
+    /// tmux -CC fork-viability gate and carries no production code path.
+    private var isHeadless = false
+
+    /// DEV-ONLY: the closure the headless `on_input` trampoline routes bytes to, on the main actor. The
+    /// bytes are copied into a `Data` out of the C buffer BEFORE the actor hop (see `onInputTrampoline`).
+    /// nil for every normal surface.
+    var headlessOnInput: ((Data) -> Void)?
+
+    /// DEV-ONLY: the closure the headless `on_resize` trampoline routes (cols, rows) to, on the main
+    /// actor. Optional; the harness wires it only to log. nil for every normal surface.
+    var headlessOnResize: ((UInt16, UInt16) -> Void)?
+
     /// Guards `handleProcessExit` so the close runs once. Both the `SHOW_CHILD_EXITED` action and the
     /// `close_surface_cb` can fire for one exit (ghostty documents no ordering/exclusivity between them).
     private var didHandleProcessExit = false
@@ -433,10 +450,117 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         ghostty_surface_draw(surface)
     }
 
+    // MARK: - Headless harness (DEV-ONLY, AGTERM_HEADLESS_HARNESS gate)
+
+    /// C trampoline for libghostty's headless `on_input` callback (signature `void (*)(void*, const
+    /// char*, uintptr_t)`). Captures NOTHING (a `@convention(c)` closure cannot): it recovers the Swift
+    /// view from the `headless_userdata` opaque pointer via `Unmanaged` (unretained — the view is owned by
+    /// its window/harness, same single-owner contract as `config.userdata`), COPIES the bytes into a Swift
+    /// `Data` BEFORE any actor hop, then dispatches to the stored closure on the main actor. No
+    /// `assumeIsolated` — every `@MainActor` touch hops through `DispatchQueue.main.async`, per the
+    /// C-callback isolation contract.
+    private static let onInputTrampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, UInt) -> Void = { userdata, ptr, len in
+        guard let userdata, let ptr, len > 0 else { return }
+        let bytes = Data(bytes: ptr, count: Int(len)) // copy out of the C buffer before hopping
+        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+        DispatchQueue.main.async { view.headlessOnInput?(bytes) }
+    }
+
+    /// C trampoline for libghostty's headless `on_resize` callback (signature `void (*)(void*, uint16_t,
+    /// uint16_t)`). Same capture-nothing / recover-via-userdata / hop-to-main contract as
+    /// `onInputTrampoline`; the harness wires the closure only to log.
+    private static let onResizeTrampoline: @convention(c) (UnsafeMutableRawPointer?, UInt16, UInt16) -> Void = { userdata, cols, rows in
+        guard let userdata else { return }
+        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+        DispatchQueue.main.async { view.headlessOnResize?(cols, rows) }
+    }
+
+    /// DEV-ONLY: mark this surface headless and register the `on_input` sink, BEFORE it attaches to a
+    /// window. `createSurface` (driven by `viewDidMoveToWindow`) then branches into `createHeadlessSurface`.
+    /// If the view is already in a sized window, create immediately.
+    func makeHeadless(onInput: @escaping (Data) -> Void) {
+        isHeadless = true
+        headlessOnInput = onInput
+        if window != nil, surface == nil { createSurface() }
+    }
+
+    /// DEV-ONLY: fills the surface config like `createSurface` but sets `headless = true`, leaves
+    /// `command`/`working_directory`/`initial_input` unset (no shell spawn), and wires the `on_input`/
+    /// `on_resize` trampolines + `headless_userdata`. The surface still renders to this NSView's Metal
+    /// layer (platform/nsview/scale/color-scheme/size are set), so the harness's `writeOutput` bytes are
+    /// visible on screen — "headless" refers only to the missing PTY.
+    private func createHeadlessSurface() {
+        guard surface == nil, let app = GhosttyApp.shared.app else { return }
+        let backingSize = convertToBacking(bounds).size
+        guard backingSize.width > 0, backingSize.height > 0 else {
+            pendingSurfaceCreation = true
+            return
+        }
+        pendingSurfaceCreation = false
+
+        var config = ghostty_surface_config_new()
+        config.platform_tag = GHOSTTY_PLATFORM_MACOS
+        config.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
+        config.userdata = Unmanaged.passUnretained(self).toOpaque()
+        config.scale_factor = Double(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0)
+        if let initialFontSize { config.font_size = initialFontSize }
+        config.headless = true
+        config.on_input = Self.onInputTrampoline
+        config.on_resize = Self.onResizeTrampoline
+        config.headless_userdata = Unmanaged.passUnretained(self).toOpaque()
+
+        surface = ghostty_surface_new(app, &config)
+        guard let surface else { return }
+
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ghostty_surface_set_color_scheme(surface, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        if let screen = window?.screen ?? NSScreen.main,
+           let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 {
+            ghostty_surface_set_display_id(surface, displayID)
+        }
+        updateGhosttyFocus()
+    }
+
+    /// DEV-ONLY: feed external VT bytes to the headless screen (`ghostty_surface_write_output`). The bytes
+    /// are copied by libghostty; no buffer must outlive the call. No-op before the surface exists.
+    func writeOutput(_ data: Data) {
+        guard let surface, !data.isEmpty else { return }
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            ghostty_surface_write_output(surface, base.assumingMemoryBound(to: CChar.self), UInt(data.count))
+        }
+    }
+
+    /// DEV-ONLY: inject synthetic INPUT text into the surface (`ghostty_surface_text`), which routes
+    /// through the headless backend's queueWrite → the `on_input` callback → `headlessOnInput`. Lets the
+    /// harness self-test the input seam with no human keystroke. No-op before the surface exists.
+    func sendText(_ text: String) {
+        guard let surface else { return }
+        text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }
+    }
+
+    /// DEV-ONLY best-effort render read-back: the full viewport's text via `ghostty_surface_read_text`,
+    /// or nil if the surface isn't up or the read returns nothing. Used by the harness to confirm the
+    /// written bytes actually rendered (should contain "hello").
+    func readViewportText() -> String? {
+        guard let surface else { return nil }
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false
+        )
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let ptr = text.text, text.text_len > 0 else { return nil }
+        return String(decoding: UnsafeRawBufferPointer(start: ptr, count: Int(text.text_len)), as: UTF8.self)
+    }
+
     // MARK: - Surface lifecycle
 
     func createSurface() {
         guard !isDestroyed else { return }
+        if isHeadless { createHeadlessSurface(); return }
         // register as a file drop target (issue #51): dropping files inserts their paths. idempotent
         // across re-entry (createSurface re-runs when a deferred surface finally gets a backing size).
         registerForDraggedTypes([.fileURL, .string, .URL])

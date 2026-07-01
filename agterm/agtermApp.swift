@@ -735,6 +735,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Boot libghostty: init, config, app_new, 120fps tick.
         _ = GhosttyApp.shared
+        // DEV-ONLY: the tmux -CC headless-surface viability gate. Behind AGTERM_HEADLESS_HARNESS=1, so a
+        // normal launch is completely unaffected (no headless surface, no extra window).
+        if HeadlessHarness.isEnabled { HeadlessHarness.start() }
         scheduleRestoredWindowReconciliation(reason: "did-finish-launching")
     }
 
