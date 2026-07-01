@@ -149,22 +149,28 @@ final class AppActions {
 
     /// Detach the tmux connection whose workspace uuid matches `connectionID` (nil = the first live
     /// connection, so a bare `tmux.detach` acts on the only one). Sends `detach-client` and tears down
-    /// the local workspace, leaving the tmux session running server-side. No-op when nothing matches.
-    func detachTmux(connectionID: String?) {
+    /// the local workspace, leaving the tmux session running server-side. Returns whether a matching
+    /// controller was found (so the control channel can surface `notFound` for a stale/bogus id).
+    @discardableResult
+    func detachTmux(connectionID: String?) -> Bool {
         for controller in tmuxControllers.values where matches(controller, connectionID) {
             controller.detach()
-            return
+            return true
         }
+        return false
     }
 
     /// Hard-kill the tmux connection whose workspace uuid matches `connectionID` (nil = the first live
     /// connection). Sends `kill-session` (terminating the server-side session and every window) and tears
-    /// down the local workspace. No-op when nothing matches.
-    func killTmux(connectionID: String?) {
+    /// down the local workspace. Returns whether a matching controller was found (so the control channel
+    /// can surface `notFound` for a stale/bogus id).
+    @discardableResult
+    func killTmux(connectionID: String?) -> Bool {
         for controller in tmuxControllers.values where matches(controller, connectionID) {
             controller.kill()
-            return
+            return true
         }
+        return false
     }
 
     /// The live tmux connections for the control channel's `tmux.list`: each attached controller mapped to

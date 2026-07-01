@@ -37,10 +37,13 @@ import agtermCore
     /// The display names of this connection's mirrored windows, for the control channel's `tmux.list`.
     /// A window with no manual/tmux name (`customName` nil) reports the `"window"` placeholder.
     func windowSummaries() -> [String] {
-        // Sort by tmux window id so `tmux.list` output is stable/testable (dictionary order is otherwise
+        // Sort NUMERICALLY by the tmux window id (the `@N` sigil), so `@10` follows `@2` rather than
+        // sorting lexicographically before it. Output is stable/testable (dictionary order is otherwise
         // undefined). Each surviving window maps through its session's manual/tmux name (`customName`),
         // falling back to the `"window"` placeholder.
-        windowToSession.keys.sorted { $0.raw < $1.raw }.compactMap { window in
+        windowToSession.keys
+            .sorted { (Int($0.raw.dropFirst()) ?? 0) < (Int($1.raw.dropFirst()) ?? 0) }
+            .compactMap { window in
             guard let sessionID = windowToSession[window] else { return nil }
             return store.session(withID: sessionID)?.customName ?? "window"
         }

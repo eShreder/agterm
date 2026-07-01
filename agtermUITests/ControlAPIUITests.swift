@@ -1966,6 +1966,25 @@ final class ControlAPIUITests: XCTestCase {
         XCTAssertNil((afterClear["result"] as? [String: Any])?["theme"], "ghostty built-in is current again (nil)")
     }
 
+    // tmux control validation, without a live tmux server (the sandboxed runner can't spawn one — a full
+    // attach→list→detach against local tmux is the controller-run Phase-4 gate, not this test):
+    //   - tmux.list on a fresh instance succeeds with no connections.
+    //   - tmux.attach with no host is rejected ("requires a host").
+    //   - tmux.detach against a bogus id surfaces not-found (ok:false) rather than a silent ok.
+    func testTmuxControlValidation() throws {
+        let list = try sendCommand(#"{"cmd":"tmux.list"}"#)
+        XCTAssertEqual(list["ok"] as? Bool, true, "tmux.list should succeed on a fresh instance: \(list)")
+        let connections = (list["result"] as? [String: Any])?["tmuxConnections"] as? [Any] ?? []
+        XCTAssertTrue(connections.isEmpty, "a fresh instance has no tmux connections: \(list)")
+
+        let noHost = try sendCommand(#"{"cmd":"tmux.attach","args":{}}"#)
+        XCTAssertEqual(noHost["ok"] as? Bool, false, "tmux.attach with no host should fail: \(noHost)")
+        XCTAssertTrue((noHost["error"] as? String ?? "").contains("host"), "the error should name the cause: \(noHost)")
+
+        let bogusDetach = try sendCommand(#"{"cmd":"tmux.detach","target":"nope"}"#)
+        XCTAssertEqual(bogusDetach["ok"] as? Bool, false, "tmux.detach against a bogus id should fail: \(bogusDetach)")
+    }
+
     // MARK: - Window oracles
 
     /// Sends `window.list` and returns the windows array.

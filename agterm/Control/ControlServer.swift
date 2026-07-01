@@ -559,10 +559,14 @@ final class ControlServer {
             actions.attachTmux(host: host, sessionName: request.args?.name ?? "main")
             return ControlResponse(ok: true)
         case .tmuxDetach:
-            actions.detachTmux(connectionID: request.target)
+            guard actions.detachTmux(connectionID: request.target) else {
+                return ControlResponse(ok: false, error: "tmux connection not found")
+            }
             return ControlResponse(ok: true)
         case .tmuxKill:
-            actions.killTmux(connectionID: request.target)
+            guard actions.killTmux(connectionID: request.target) else {
+                return ControlResponse(ok: false, error: "tmux connection not found")
+            }
             return ControlResponse(ok: true)
         case .tmuxList:
             let nodes = actions.listTmux().map { ControlTmuxNode(id: $0.id, host: $0.host, windows: $0.windows) }
