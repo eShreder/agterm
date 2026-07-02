@@ -289,6 +289,9 @@ private final class StubServer: @unchecked Sendable {
     private let canned: ControlResponse
     private var listenFD: Int32 = -1
     private let queue = DispatchQueue(label: "stub.server")
+    private let finished = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stopped = false
     private(set) var received: ControlRequest?
 
     init(response: ControlResponse) {
@@ -323,11 +326,14 @@ private final class StubServer: @unchecked Sendable {
             throw SocketClientError("stub listen failed")
         }
         listenFD = fd
-        queue.async { [self] in accept(fd) }
+        queue.async { [self] in accept(fd); finished.signal() }
     }
 
     private func accept(_ fd: Int32) {
         let conn = Darwin.accept(fd, nil, nil)
+        lock.lock(); let done = stopped; lock.unlock()
+        // stop() woke this accept only to join it — don't serve a request on a stopping server.
+        if done { if conn >= 0 { close(conn) }; return }
         guard conn >= 0 else { return }
         defer { close(conn) }
 
@@ -357,8 +363,35 @@ private final class StubServer: @unchecked Sendable {
     }
 
     func stop() {
-        if listenFD >= 0 { close(listenFD); listenFD = -1 }
+        guard listenFD >= 0 else { unlink(path); return }
+        lock.lock(); stopped = true; lock.unlock()
+        wakeAccept(path)                        // unblock a pending accept() so the loop observes `stopped`
+        _ = finished.wait(timeout: .now() + 2)  // join the accept loop before freeing the fd
+        close(listenFD); listenFD = -1
         unlink(path)
+    }
+}
+
+/// Connect once to `path` and immediately close, to wake a stub server's blocked `accept()` so its
+/// background loop can observe `stopped` and exit. Best-effort — a failed connect is ignored. Shared by
+/// both stub servers so `stop()` can JOIN the accept loop before the listen fd is closed, which is what
+/// keeps a lingering loop from serving the next server's client on a reused fd number.
+private func wakeAccept(_ path: String) {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return }
+    defer { close(fd) }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = path.utf8CString
+    withUnsafeMutablePointer(to: &addr.sun_path) { dst in
+        dst.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { buf in
+            pathBytes.withUnsafeBufferPointer { src in buf.update(from: src.baseAddress!, count: src.count) }
+        }
+    }
+    _ = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+            Darwin.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
     }
 }
 
@@ -370,6 +403,9 @@ private final class ScriptedStubServer: @unchecked Sendable {
     private let responder: @Sendable (ControlRequest) -> ControlResponse
     private var listenFD: Int32 = -1
     private let queue = DispatchQueue(label: "scripted.stub.server")
+    private let finished = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stopped = false
 
     init(responder: @escaping @Sendable (ControlRequest) -> ControlResponse) {
         self.responder = responder
@@ -403,13 +439,18 @@ private final class ScriptedStubServer: @unchecked Sendable {
             throw SocketClientError("scripted listen failed")
         }
         listenFD = fd
-        queue.async { [self] in acceptLoop(fd) }
+        queue.async { [self] in acceptLoop(fd); finished.signal() }
     }
 
     private func acceptLoop(_ fd: Int32) {
         while true {
             let conn = Darwin.accept(fd, nil, nil)
-            if conn < 0 { return }  // listen fd closed by stop()
+            lock.lock(); let done = stopped; lock.unlock()
+            // stop() flips `stopped` then self-connects to wake this accept; observing it here is what
+            // lets the loop exit (and be joined) before the fd is closed, so it can never run accept on a
+            // number the next server has reused.
+            if done { if conn >= 0 { close(conn) }; return }
+            if conn < 0 { return }
             handle(conn)
             close(conn)
         }
@@ -439,7 +480,11 @@ private final class ScriptedStubServer: @unchecked Sendable {
     }
 
     func stop() {
-        if listenFD >= 0 { close(listenFD); listenFD = -1 }
+        guard listenFD >= 0 else { unlink(path); return }
+        lock.lock(); stopped = true; lock.unlock()
+        wakeAccept(path)                        // unblock a pending accept() so the loop observes `stopped`
+        _ = finished.wait(timeout: .now() + 2)  // join the accept loop before freeing the fd
+        close(listenFD); listenFD = -1
         unlink(path)
     }
 }
