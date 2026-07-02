@@ -181,13 +181,21 @@ final class AppActions {
 
     /// Attach to a remote tmux session over ssh (`ssh -tt <host> tmux -CC new -A -s <name>`), mirroring
     /// each tmux window into a fresh "tmux: <host>/<session>" workspace in the frontmost window's store.
-    /// A fresh controller per call, so multiple sessions on one host coexist as separate workspaces. Returns
+    /// A fresh controller per call, so multiple sessions on one host coexist as separate workspaces; a
+    /// repeat attach to an already-mirrored host+session focuses that connection instead of duplicating it.
+    /// Returns
     /// `false` (no-op) when no window is open, so the control channel can surface a "no open window"
     /// error instead of a silent ok. (Phase 4 exposes this over the control channel; Task 6 wires the
     /// entry.)
     @discardableResult
     func attachTmux(host: String, sessionName: String, workspaceName: String? = nil) -> Bool {
         guard let store else { return false }
+        // Dedup: a repeat attach to a host+session already mirrored just focuses that connection's
+        // workspace rather than spawning a second, redundant mirror of the same tmux windows.
+        if let existing = tmuxControllers.first(where: { $0.mirrors(host: host, session: sessionName) }) {
+            existing.focus()
+            return true
+        }
         let controller = makeTmuxController(for: store)
         controller.attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
         tmuxControllers.append(controller)
@@ -222,6 +230,10 @@ final class AppActions {
     /// gate path (env-gated launch hook in `agtermApp`). No-op when no window is open.
     func attachLocal(sessionName: String) {
         guard let store else { return }
+        if let existing = tmuxControllers.first(where: { $0.mirrors(host: "local", session: sessionName) }) {
+            existing.focus()
+            return
+        }
         let controller = makeTmuxController(for: store)
         controller.attachLocal(sessionName: sessionName)
         tmuxControllers.append(controller)

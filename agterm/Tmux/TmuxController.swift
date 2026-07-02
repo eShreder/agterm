@@ -35,9 +35,30 @@ import agtermCore
     /// top of the attach path (before spawning). Exposed via `AppActions.listTmux` for the control channel.
     private(set) var host: String = ""
 
+    /// The tmux session name this connection attached to (`main`, `agtgate`, …). With `host` it forms the
+    /// connection IDENTITY used to dedup a repeat attach: a second attach to the same host+session focuses
+    /// this live connection (`focus()`) instead of spawning a redundant second mirror of the same windows.
+    private(set) var sessionName: String = ""
+
     /// The id of the workspace this connection mirrors into, or nil before an attach / after teardown.
     /// Exposes the private `workspaceID` so `AppActions` can address the connection by workspace uuid.
     var connectionWorkspaceID: UUID? { workspaceID }
+
+    /// True when this LIVE connection already mirrors `host`+`session` — the dedup key for a repeat attach.
+    /// Requires a live workspace so a torn-down (nil-workspace) controller never shadows a fresh attach.
+    func mirrors(host: String, session: String) -> Bool {
+        workspaceID != nil && self.host == host && self.sessionName == session
+    }
+
+    /// Bring this connection's workspace to front by SELECTING one of its sessions (workspace focus is
+    /// derived from the selected session in `AppStore`). Prefers the lowest-numbered mirrored window;
+    /// falls back to the bootstrap "connecting…" session while the handshake is still pending.
+    func focus() {
+        let target = windowToSession
+            .sorted { (Int($0.key.raw.dropFirst()) ?? 0) < (Int($1.key.raw.dropFirst()) ?? 0) }
+            .first?.value ?? bootstrapSessionID
+        if let target { store.selectSession(target) }
+    }
 
     /// Fired ONCE when this connection tears down (detach / kill / ssh-drop / `%exit`). The owner
     /// (`AppActions`) uses it to drop the now-dead controller from its live-connection list — each attach
@@ -79,6 +100,7 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = host
+        self.sessionName = sessionName
         // Include the tmux session in the default name so several sessions on ONE host are distinct
         // workspaces in the sidebar (not two identically-named "tmux: host" rows).
         workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)/\(sessionName)", ephemeral: true).id
@@ -100,6 +122,7 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = "local"
+        self.sessionName = sessionName
         workspaceID = store.addWorkspace(name: "tmux: local/\(sessionName)", ephemeral: true).id
         let env = ProcessInfo.processInfo.environment
         let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"

@@ -178,6 +178,8 @@ paths:
     Each attach owns ONE `TmuxController` (created fresh per attach, keyed by connection — NOT one per
     window), so several sessions on the same host, and a detach→reattach, coexist as separate
     connections/workspaces instead of the later attach stomping the earlier one.
+    A repeat attach to a host+session ALREADY mirrored is deduped: it focuses the existing connection's
+    workspace instead of spawning a second mirror of the same windows.
     See the tmux -CC feature spec + phased plans under `docs/superpowers/`)
 
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
