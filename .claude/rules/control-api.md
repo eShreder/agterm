@@ -170,11 +170,14 @@ paths:
   - `theme.set`/`theme.list` (see the Theme picker section)
   - `restore.clear` (see the Settings section)
   - `tmux.attach`/`tmux.detach`/`tmux.list`/`tmux.kill` (native `tmux -CC`: `tmux.attach` spawns an
-    `ssh <host> tmux -CC` gateway whose windows become native agterm sessions in a `tmux: <host>`
+    `ssh <host> tmux -CC` gateway whose windows become native agterm sessions in a `tmux: <host>/<session>`
     workspace, v1 NO-splits — a split tmux window shows only its leading pane;
     the connection id used by detach/kill/list is the tmux WORKSPACE's id; `tmux.detach` is soft
     (`detach-client`, the remote session survives for reattach), `tmux.kill` is a hard remote
     `kill-session`, `tmux.list` reports active connections' id/host/window-names.
+    Each attach owns ONE `TmuxController` (created fresh per attach, keyed by connection — NOT one per
+    window), so several sessions on the same host, and a detach→reattach, coexist as separate
+    connections/workspaces instead of the later attach stomping the earlier one.
     See the tmux -CC feature spec + phased plans under `docs/superpowers/`)
 
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing

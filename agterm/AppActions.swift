@@ -148,7 +148,7 @@ final class AppActions {
     /// The `TmuxController` that owns `sessionID` (has a live tmux window mapped to it), or nil for a
     /// normal (non-tmux) session — the resolver behind the backend-aware `renameSession`/`closeSession`.
     private func tmuxControllerOwning(_ sessionID: UUID) -> TmuxController? {
-        tmuxControllers.values.first { $0.owns(session: sessionID) }
+        tmuxControllers.first { $0.owns(session: sessionID) }
     }
 
     /// Clear the active session's agent-status indicator back to idle (the same effect as `agtermctl
@@ -160,28 +160,37 @@ final class AppActions {
 
     // MARK: - Tmux (-CC control mode)
 
-    /// One `TmuxController` per target store (keyed by store identity), so each window's tmux attach
-    /// gets its own gateway + workspace. Created on demand; kept for the app's lifetime (an attach
-    /// tears down its own workspace on detach/exit, so a re-attach reuses the same controller).
-    private var tmuxControllers: [ObjectIdentifier: TmuxController] = [:]
+    /// One `TmuxController` per LIVE tmux connection — NOT per window. Each `attachTmux`/`attachLocal`
+    /// creates a FRESH controller, so several sessions on the same host, and a detach→reattach, each get
+    /// their own gateway + workspace + model. A single reused controller instead (a) tore down the previous
+    /// attach on the next `attach()` — the "SESSION_2 replaces SESSION_1" bug — and (b) reattached onto a
+    /// stale window-id model, so the workspace came back empty until relaunch. A controller prunes itself
+    /// from this list on teardown via `onClose`.
+    private var tmuxControllers: [TmuxController] = []
 
-    private func tmuxController(for store: AppStore) -> TmuxController {
-        let key = ObjectIdentifier(store)
-        if let existing = tmuxControllers[key] { return existing }
+    /// Build a fresh controller wired to prune itself from `tmuxControllers` when it tears down. The caller
+    /// then drives `attach`/`attachLocal` on it and appends it (after the attach has set its workspace id,
+    /// so the `onClose` prune — which drops any nil-workspace controller — can't remove it prematurely).
+    private func makeTmuxController(for store: AppStore) -> TmuxController {
         let controller = TmuxController(store: store)
-        tmuxControllers[key] = controller
+        controller.onClose = { [weak self] in
+            self?.tmuxControllers.removeAll { $0.connectionWorkspaceID == nil }
+        }
         return controller
     }
 
     /// Attach to a remote tmux session over ssh (`ssh -tt <host> tmux -CC new -A -s <name>`), mirroring
-    /// each tmux window into a fresh "tmux: <host>" workspace in the frontmost window's store. Returns
+    /// each tmux window into a fresh "tmux: <host>/<session>" workspace in the frontmost window's store.
+    /// A fresh controller per call, so multiple sessions on one host coexist as separate workspaces. Returns
     /// `false` (no-op) when no window is open, so the control channel can surface a "no open window"
     /// error instead of a silent ok. (Phase 4 exposes this over the control channel; Task 6 wires the
     /// entry.)
     @discardableResult
     func attachTmux(host: String, sessionName: String, workspaceName: String? = nil) -> Bool {
         guard let store else { return false }
-        tmuxController(for: store).attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
+        let controller = makeTmuxController(for: store)
+        controller.attach(host: host, sessionName: sessionName, workspaceName: workspaceName)
+        tmuxControllers.append(controller)
         return true
     }
 
@@ -213,7 +222,9 @@ final class AppActions {
     /// gate path (env-gated launch hook in `agtermApp`). No-op when no window is open.
     func attachLocal(sessionName: String) {
         guard let store else { return }
-        tmuxController(for: store).attachLocal(sessionName: sessionName)
+        let controller = makeTmuxController(for: store)
+        controller.attachLocal(sessionName: sessionName)
+        tmuxControllers.append(controller)
     }
 
     /// Detach the tmux connection whose workspace uuid matches `connectionID` (nil = the first live
@@ -222,7 +233,7 @@ final class AppActions {
     /// controller was found (so the control channel can surface `notFound` for a stale/bogus id).
     @discardableResult
     func detachTmux(connectionID: String?) -> Bool {
-        for controller in tmuxControllers.values where matches(controller, connectionID) {
+        for controller in tmuxControllers where matches(controller, connectionID) {
             controller.detach()
             return true
         }
@@ -235,7 +246,7 @@ final class AppActions {
     /// can surface `notFound` for a stale/bogus id).
     @discardableResult
     func killTmux(connectionID: String?) -> Bool {
-        for controller in tmuxControllers.values where matches(controller, connectionID) {
+        for controller in tmuxControllers where matches(controller, connectionID) {
             controller.kill()
             return true
         }
@@ -246,7 +257,7 @@ final class AppActions {
     /// its workspace uuid, target host, and window display names. Controllers with no live workspace
     /// (never attached / torn down) are skipped.
     func listTmux() -> [(id: String, host: String, windows: [String])] {
-        tmuxControllers.values.compactMap { controller in
+        tmuxControllers.compactMap { controller in
             guard let wid = controller.connectionWorkspaceID else { return nil }
             return (wid.uuidString, controller.host, controller.windowSummaries())
         }

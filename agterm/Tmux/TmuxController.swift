@@ -39,6 +39,12 @@ import agtermCore
     /// Exposes the private `workspaceID` so `AppActions` can address the connection by workspace uuid.
     var connectionWorkspaceID: UUID? { workspaceID }
 
+    /// Fired ONCE when this connection tears down (detach / kill / ssh-drop / `%exit`). The owner
+    /// (`AppActions`) uses it to drop the now-dead controller from its live-connection list — each attach
+    /// creates a FRESH controller, so a torn-down one must be pruned rather than lingering as a nil-workspace
+    /// zombie. Teardown is idempotent, so this fires at most once per attached lifetime.
+    var onClose: (() -> Void)?
+
     /// The display names of this connection's mirrored windows, for the control channel's `tmux.list`.
     /// A window with no manual/tmux name (`customName` nil) reports the `"window"` placeholder.
     func windowSummaries() -> [String] {
@@ -73,7 +79,9 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = host
-        workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)", ephemeral: true).id
+        // Include the tmux session in the default name so several sessions on ONE host are distinct
+        // workspaces in the sidebar (not two identically-named "tmux: host" rows).
+        workspaceID = store.addWorkspace(name: workspaceName ?? "tmux: \(host)/\(sessionName)", ephemeral: true).id
         let remote = "tmux -CC new -A -s \(sessionName)"
         startGateway(path: "/usr/bin/ssh", args: ["/usr/bin/ssh", "-tt", host, remote],
                      env: ProcessInfo.processInfo.environment)
@@ -92,7 +100,7 @@ import agtermCore
         // workspace is created.
         if gateway != nil { teardownWorkspace() }
         self.host = "local"
-        workspaceID = store.addWorkspace(name: "tmux: local", ephemeral: true).id
+        workspaceID = store.addWorkspace(name: "tmux: local/\(sessionName)", ephemeral: true).id
         let env = ProcessInfo.processInfo.environment
         let tmuxPath = env["AGTERM_TMUX_BIN"] ?? "/opt/homebrew/bin/tmux"
         let socketArgs = env["AGTERM_TMUX_SOCKET"].map { ["-L", $0] } ?? []
@@ -299,6 +307,10 @@ import agtermCore
     /// path: `PTYProcess.deinit` does not reliably close its fd, so an explicit `stop()`
     /// (→ `pty.terminate()`) is required to avoid an fd leak / orphaned child.
     private func teardownWorkspace() {
+        // Idempotent: `detach()`/`kill()` tear down synchronously, then the gateway's OWN async `onExit`
+        // (the child exiting on `stop()`) calls this a second time. Do nothing — and don't re-fire
+        // `onClose` — once there's nothing left to tear down.
+        guard gateway != nil || workspaceID != nil || bootstrapSessionID != nil else { return }
         if let id = bootstrapSessionID { store.closeSession(id); bootstrapSessionID = nil }
         if let workspaceID { store.removeWorkspace(workspaceID) }
         workspaceID = nil
@@ -307,7 +319,14 @@ import agtermCore
         blockLines.removeAll()
         pendingCaptureWindows.removeAll()
         initializedWindows = false
+        // Reset the window→session FOLD too. `model` tracks the tmux window ids already mapped, and
+        // `windowAdd` is idempotent per id — so reattaching onto a stale model drops every `%window-add`
+        // as a duplicate and the workspace comes back EMPTY (fixed by relaunch, which built a fresh model).
+        // Controllers are single-use now (a fresh one per attach), but reset defensively so the internal
+        // re-attach guard in `attach`/`attachLocal` can never hit a stale model.
+        model = TmuxSessionModel()
         gateway?.stop()
         gateway = nil
+        onClose?()
     }
 }
