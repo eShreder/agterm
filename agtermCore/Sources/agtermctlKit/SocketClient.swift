@@ -52,6 +52,7 @@ struct SocketClient {
         #if canImport(Darwin)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         #else
+        // Glibc types SOCK_STREAM as the __socket_type enum, not Int32.
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
         #endif
         guard fd >= 0 else { throw SocketClientError("socket() failed: \(String(cString: strerror(errno)))") }
@@ -141,6 +142,9 @@ struct SocketClient {
         if let windows = response.result?.windows {
             return formatWindows(windows)
         }
+        if let connections = response.result?.tmuxConnections {
+            return formatTmuxConnections(connections)
+        }
         if let themes = response.result?.themes {
             return formatThemes(themes, current: response.result?.theme, sync: response.result?.sync ?? false,
                                 light: response.result?.light, dark: response.result?.dark)
@@ -166,6 +170,19 @@ struct SocketClient {
             return id
         }
         return "ok"
+    }
+
+    /// Render the `tmux.list` payload: one connection per line as `<id>  <host>/<session>  [win1, win2]`
+    /// (host/session is the connection's identity — two connections to one host stay distinguishable),
+    /// or a friendly note when there are none.
+    static func formatTmuxConnections(_ connections: [ControlTmuxNode]) -> String {
+        if connections.isEmpty { return "no tmux connections" }
+        return connections
+            .map { node in
+                let identity = node.session.map { "\(node.host)/\($0)" } ?? node.host
+                return "\(node.id)  \(identity)  [\(node.windows.joined(separator: ", "))]"
+            }
+            .joined(separator: "\n")
     }
 
     /// Render the `theme.list` payload as one theme name per line, the active theme(s) marked with `* `
