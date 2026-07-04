@@ -158,6 +158,10 @@ public struct ControlDispatcher {
             return await dispatchWindowCommand(request)
         case .dashboard:
             return dispatchDashboard(request)
+        case .tmuxAttach, .tmuxDetach, .tmuxList, .tmuxKill:
+            // tmux.* is NOT dispatcher-owned: it drives live TmuxController side effects, so it returns
+            // nil and falls through to ControlServer's switch (the documented not-yet-migrated path).
+            return nil
         case .debugAppearance:
             // UI-test-only seam handled app-side in `ControlServer` (needs AppKit + `ContentView.isUITestLaunch`).
             return nil
