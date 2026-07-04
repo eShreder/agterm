@@ -53,7 +53,7 @@ struct agtermApp: App {
         WindowGroup(id: Self.windowGroupID) {
             ContentView(
                 library: library,
-                makeSurface: { Self.makeSurface(for: $0, store: $1, env: surfaceEnv(for: $0, pane: .left), library: library) },
+                makeSurface: { Self.makeSurface(for: $0, store: $1, env: surfaceEnv(for: $0, pane: .left), library: library, actions: actions) },
                 makeSplitSurface: { Self.makeSplitSurface(for: $0, store: $1, env: surfaceEnv(for: $0, pane: .right), library: library) },
                 makeOverlaySurface: { Self.makeOverlaySurface(for: $0, store: $1, env: surfaceEnv(for: $0)) },
                 makeScratchSurface: { session, store in
@@ -135,6 +135,12 @@ struct agtermApp: App {
                     if !library.hasReopened, GhosttyApp.shared.lastConfigDiagnosticsCount > 0 {
                         NotificationManager.shared.notifyConfigDiagnostics(count: GhosttyApp.shared.lastConfigDiagnosticsCount)
                     }
+                    // DEV-ONLY: attach to a LOCAL tmux -CC (no ssh) behind AGTERM_TMUX_LOCAL=1 so the
+                    // relay path can be exercised deterministically against a local tmux. Launch window
+                    // only (`hasReopened` still false here, like the diagnostics banners above).
+                    if !library.hasReopened, ProcessInfo.processInfo.environment["AGTERM_TMUX_LOCAL"] == "1" {
+                        actions.attachLocal(sessionName: "agtgate")
+                    }
                     // reopen every window that was open at quit. SwiftUI auto-opened one window
                     // (this one) at launch, which claimed the launch id; open one more per remaining
                     // open id. runs once (the .task fires per window) via the library latch.
@@ -179,7 +185,7 @@ struct agtermApp: App {
     /// view calls back to close the owning session in the store.
     @MainActor
     private static func makeSurface(for session: Session, store: AppStore, env: [String: String],
-                                    library: WindowLibrary) -> GhosttySurfaceView {
+                                    library: WindowLibrary, actions: AppActions) -> GhosttySurfaceView {
         // `initialCommand` (from `session.new --command`) runs as the surface's process instead of the
         // login shell; on its exit the surface's onExit (below) closes the single session, like kitty.
         // restore-running-command: `foregroundCommand` (a distinct child captured at quit) is consumed
@@ -201,6 +207,10 @@ struct agtermApp: App {
         view.session = session
         let sessionID = session.id
         view.onExit = {
+            // a tmux relay child that died on its own (crash, external kill) leaves its tmux window
+            // mirrored nowhere; unmirror it in the owning controller so `tmux.list` and `tmux:`
+            // addressing stay truthful. No-op for plain local sessions and controller-driven closes.
+            actions.tmuxRelayChildExited(sessionID)
             store.closePrimaryPane(sessionID)
             // focus the surviving (now maximized) pane; if the whole (single) session closed instead,
             // focus the session it reselected to. the collapse/switch re-hosts the target, so use the retry.

@@ -22,7 +22,7 @@ extension AppActions {
     private var paletteContext: PaletteContext {
         let activeStore = store
         return PaletteContext(
-            canRemoveWorkspace: activeStore?.canRemoveWorkspace == true,
+            canRemoveWorkspace: activeStore?.canRemoveActiveWorkspace == true,
             hasFlaggedSessions: activeStore?.flaggedSessions.isEmpty == false,
             sidebarShowsWorkspaceTree: activeStore?.sidebarMode == .tree,
             sidebarShowsFlaggedOnly: activeStore?.sidebarMode == .flagged,
@@ -103,8 +103,13 @@ extension AppActions {
                 self?.openWindow(target)
             })
         }
-        if let store, let current = store.currentWorkspaceID, let sessionID = store.selectedSessionID {
-            for workspace in store.workspaces where workspace.id != current {
+        // "Move Session to …" only bridges NORMAL workspaces: a tmux-backed session (in an ephemeral
+        // mirror) can't move out, and no session may move INTO a mirror — `AppStore.moveSession` refuses
+        // both, so offering them would be a silent no-op. Mirror the sidebar row's "Move to" submenu:
+        // skip the items entirely for an ephemeral source, and exclude ephemeral targets.
+        if let store, let current = store.currentWorkspaceID, let sessionID = store.selectedSessionID,
+           store.workspace(forSession: sessionID)?.ephemeral != true {
+            for workspace in store.workspaces where workspace.id != current && !workspace.ephemeral {
                 let target = workspace.id
                 items.append(PaletteItem(id: "move-\(target)", title: "Move Session to \(workspace.name)") { [weak self] in
                     self?.moveSession(sessionID, toWorkspace: target)

@@ -94,7 +94,7 @@ extension agtermApp {
                     .disabled(library.activeStore?.currentWorkspaceID == nil)
                 Button("Delete Workspace") { actions.deleteActiveWorkspace() }
                     .keyboardShortcut(shortcut(for: .deleteWorkspace))
-                    .disabled(library.activeStore?.canRemoveWorkspace != true)
+                    .disabled(library.activeStore?.canRemoveActiveWorkspace != true)
 
                 Divider()
                 // Session. Open Directory… opens a new session rooted at a chosen folder; Close
@@ -103,6 +103,7 @@ extension agtermApp {
                     .keyboardShortcut(shortcut(for: .newSession))
                 Button("Open Directory…") { actions.openDirectory() }
                     .keyboardShortcut(shortcut(for: .openDirectory))
+                Button("Attach tmux Session…") { actions.attachTmuxPrompt() }
                 Button("Rename Session") { actions.renameActiveSession() }
                     .keyboardShortcut(shortcut(for: .renameSession))
                     .disabled(library.activeStore?.activeSession == nil)

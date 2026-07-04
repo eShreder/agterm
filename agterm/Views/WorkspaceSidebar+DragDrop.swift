@@ -70,13 +70,27 @@ extension WorkspaceSidebar.Coordinator {
               let source = store.sessionLocation(ofSession: sessionID) else { return nil }
 
         let target: SidebarDrop.SessionDropTarget
+        let targetWorkspace: UUID
         switch node.kind {
         case .workspace:
             let count = store.workspaces.first(where: { $0.id == node.id })?.sessions.count ?? 0
             target = .workspaceRow(id: node.id, sessionCount: count)
+            targetWorkspace = node.id
         case .session:
             guard let drop = store.sessionLocation(ofSession: node.id) else { return nil }
             target = .sessionRow(workspace: drop.workspace, sessionIndex: drop.index, sessionCount: drop.count)
+            targetWorkspace = drop.workspace
+        }
+
+        // A tmux mirror (ephemeral workspace) hosts ONLY its controller's tmux-backed sessions, so a
+        // CROSS-mirror move is refused at the store (`moveSession` returns false) and hidden from the
+        // context menu + palette; decline it here too, else `validateDrop` shows a green drop highlight
+        // and `acceptDrop` silently no-ops (the refused Bool is discarded). A same-workspace reorder
+        // inside a mirror is exempt, matching the store's boundary check.
+        if source.workspace != targetWorkspace,
+           store.workspaces.first(where: { $0.id == source.workspace })?.ephemeral == true
+            || store.workspaces.first(where: { $0.id == targetWorkspace })?.ephemeral == true {
+            return nil
         }
 
         guard let move = SidebarDrop.resolveSession(sourceWorkspace: source.workspace, sourceIndex: source.index,

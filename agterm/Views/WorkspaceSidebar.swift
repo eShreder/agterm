@@ -175,7 +175,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         init(store: AppStore, actions: AppActions) {
             self.store = store
             self.actions = actions
-            self.renameController = SidebarRenameController(store: store)
+            self.renameController = SidebarRenameController(store: store, actions: actions)
             super.init()
             renameController.onRenameEnded = { [weak self] in self?.focusActiveTerminal() }
             // the menu/palette can't reach the inline editor directly, so they post a

@@ -173,14 +173,16 @@ extension ControlServer: ControlActions {
 
     func closeSession(_ target: String?, window: String?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
-            store.closeSession(id)
+            // backend-aware: a tmux session routes to kill-window (torn down by the %window-close echo).
+            if !actions.closeTmuxSession(id) { store.closeSession(id) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
 
     func renameSession(_ target: String?, window: String?, name: String) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
-            store.renameSession(id, to: name)
+            // backend-aware: a tmux session routes to rename-window (name follows via %window-renamed).
+            if !actions.renameTmuxSession(id, to: name) { store.renameSession(id, to: name) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -219,7 +221,11 @@ extension ControlServer: ControlActions {
             guard store.canRemoveWorkspace else {
                 return ControlResponse(ok: false, error: "cannot delete last workspace")
             }
-            store.removeWorkspace(id)
+            // a tmux mirror workspace is backed by a live TmuxController; detach it (tmux survives
+            // server-side, removing the workspace via teardown) so the gateway + relay sockets are
+            // freed — a plain removeWorkspace would orphan the ssh/tmux client and leave a phantom
+            // tmux.list entry. A normal workspace has no controller and falls through to removal.
+            if !actions.detachTmux(forConnectionWorkspace: id) { store.removeWorkspace(id) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -474,7 +480,11 @@ extension ControlServer: ControlActions {
             return resolver.resolveSession(target, window: window) { store, sessionID in
                 resolver.resolve(workspace, candidates: store.workspaces.map(\.id),
                         active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
-                    store.moveSession(sessionID, toWorkspace: workspaceID)
+                    // `moveSession` REFUSES a cross-ephemeral (tmux mirror) boundary — report it rather than
+                    // a silent `ok`. Both ids are already resolved here, so a false return means that refusal.
+                    guard store.moveSession(sessionID, toWorkspace: workspaceID) else {
+                        return ControlResponse(ok: false, error: "cannot move a session into or out of a tmux mirror")
+                    }
                     return ControlResponse(ok: true, result: ControlResult(id: sessionID.uuidString))
                 }
             }
