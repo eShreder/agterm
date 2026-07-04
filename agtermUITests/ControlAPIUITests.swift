@@ -153,6 +153,40 @@ final class ControlAPIUITests: ControlAPITestCase {
         XCTAssertTrue((missing["error"] as? String)?.contains("no such session") == true)
     }
 
+    // tmux control validation WITHOUT a live tmux server (the sandboxed runner can't spawn one — a full
+    // attach→list→detach against local tmux is the controller-run manual gate, not this test):
+    //   - tmux.list on a fresh instance succeeds with no connections.
+    //   - tmux.attach with no host is rejected ("requires a host").
+    //   - tmux.attach with a `-`-prefixed host is rejected with the PINNED "invalid ssh host" — the
+    //     ssh-option-injection screen (`-oProxyCommand=…` would run a LOCAL command).
+    //   - tmux.detach / tmux.kill against a bogus id surface not-found (ok:false), not a silent ok.
+    //   - tmux: addressing against a non-live pane/window returns the pinned error "no such session: tmux:%N".
+    func testTmuxControlValidation() throws {
+        let list = try sendCommand(#"{"cmd":"tmux.list"}"#)
+        XCTAssertEqual(list["ok"] as? Bool, true, "tmux.list should succeed on a fresh instance: \(list)")
+        let connections = (list["result"] as? [String: Any])?["tmuxConnections"] as? [Any] ?? []
+        XCTAssertTrue(connections.isEmpty, "a fresh instance has no tmux connections: \(list)")
+
+        let noHost = try sendCommand(#"{"cmd":"tmux.attach","args":{}}"#)
+        XCTAssertEqual(noHost["ok"] as? Bool, false, "tmux.attach with no host should fail: \(noHost)")
+
+        let optionHost = try sendCommand(#"{"cmd":"tmux.attach","args":{"host":"-oProxyCommand=touch /tmp/x"}}"#)
+        XCTAssertEqual(optionHost["ok"] as? Bool, false, "a -prefixed host must be rejected: \(optionHost)")
+        XCTAssertEqual(optionHost["error"] as? String, "invalid ssh host",
+                       "the option-injection screen has its own pinned error")
+
+        let bogusDetach = try sendCommand(#"{"cmd":"tmux.detach","target":"nope"}"#)
+        XCTAssertEqual(bogusDetach["ok"] as? Bool, false, "tmux.detach against a bogus id should fail: \(bogusDetach)")
+
+        let bogusKill = try sendCommand(#"{"cmd":"tmux.kill","target":"nope"}"#)
+        XCTAssertEqual(bogusKill["ok"] as? Bool, false, "tmux.kill against a bogus id should fail: \(bogusKill)")
+
+        // tmux: addressing resolves only live mirrored panes/windows — a miss is the pinned error.
+        let miss = try sendCommand(#"{"cmd":"session.rename","target":"tmux:%999","args":{"name":"nope"}}"#)
+        XCTAssertEqual(miss["ok"] as? Bool, false, "a tmux: target with no live match should fail: \(miss)")
+        XCTAssertEqual(miss["error"] as? String, "no such session: tmux:%999", "the pinned tmux: miss error should be returned")
+    }
+
     // session.background sets a text watermark and clears it; bad input (missing image, invalid fit) is
     // rejected and the server stays alive. The actual pixels are not AX-observable (Metal surface), so this
     // covers the control round-trip + validation, like the other surface-state commands.

@@ -17,9 +17,10 @@ struct WindowAccessor: NSViewRepresentable {
     let windowID: WindowInfo.ID
     let library: WindowLibrary
     let store: AppStore
+    let actions: AppActions
 
     func makeNSView(context _: Context) -> TitleProbeView {
-        TitleProbeView(windowID: windowID, library: library, store: store)
+        TitleProbeView(windowID: windowID, library: library, store: store, actions: actions)
     }
 
     func updateNSView(_ nsView: TitleProbeView, context _: Context) {
@@ -30,6 +31,7 @@ struct WindowAccessor: NSViewRepresentable {
         private let windowID: WindowInfo.ID
         private let library: WindowLibrary
         private let store: AppStore
+        private let actions: AppActions
 
         /// Observer tokens for window key/fullscreen transitions, after which AppKit
         /// rebuilds the titlebar subviews and the blend must be re-applied.
@@ -41,10 +43,11 @@ struct WindowAccessor: NSViewRepresentable {
         /// The confirm-before-close delegate proxy, owned here (NSWindow.delegate is weak).
         private var closeProxy: WindowCloseDelegateProxy?
 
-        init(windowID: WindowInfo.ID, library: WindowLibrary, store: AppStore) {
+        init(windowID: WindowInfo.ID, library: WindowLibrary, store: AppStore, actions: AppActions) {
             self.windowID = windowID
             self.library = library
             self.store = store
+            self.actions = actions
             super.init(frame: .zero)
         }
 
@@ -143,7 +146,7 @@ struct WindowAccessor: NSViewRepresentable {
             // report close: tear down this window's surfaces, then mark it closed in the library.
             // capture library/store/id directly (NOT through `self`) — the view is being deallocated
             // as the window closes, so a `[weak self]` hop would no-op and the index would never update.
-            let closeToken = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [library, store, windowID, weak window] _ in
+            let closeToken = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [library, store, windowID, actions, weak window] _ in
                 MainActor.assumeIsolated {
                     // persist this window's final frame (keyed by its id) so an in-session reopen — or
                     // a restart — restores its size/position. SwiftUI's own index-based autosave can't.
@@ -164,6 +167,12 @@ struct WindowAccessor: NSViewRepresentable {
                         session.overlaySurface?.teardown()
                         session.scratchSurface?.teardown()
                     }
+                    // detach any live tmux connection hosted in THIS window's store before the store is
+                    // dropped: the controller is app-global (AppActions.tmuxControllers) and holds the
+                    // store + gateway strongly, so without this a window close orphans the ssh/tmux client
+                    // and leaks the per-window relay sockets + the retained store (closeWindow only drops
+                    // the library's ref). Detach (not kill) leaves the session server-side for reattach.
+                    actions.detachTmux(forClosingWindowStore: store)
                     library.closeWindow(windowID)
                     // closing a window drops its (unobserved) store, so the Dock badge's observation
                     // tracking won't fire — refresh it explicitly so the unseen total drops this window's.

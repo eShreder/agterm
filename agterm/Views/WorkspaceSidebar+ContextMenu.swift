@@ -74,8 +74,14 @@ extension WorkspaceSidebar.Coordinator {
 
         switch node.kind {
         case .session:
-            let targets = store.workspaces.filter { workspace in
-                sessionTargets.contains { ownerWorkspaceID(ofSession: $0) != workspace.id }
+            // "Move to" only bridges NORMAL workspaces: a tmux-backed session (in an ephemeral mirror)
+            // can't move out, and no session may move INTO a mirror — a cross-mirror move would be
+            // killed/stranded on detach (AppStore.moveSession enforces this; the menu just doesn't offer it).
+            let sourceEphemeral = sessionTargets.contains { id in
+                store.workspaces.first(where: { $0.id == ownerWorkspaceID(ofSession: id) })?.ephemeral == true
+            }
+            let targets: [Workspace] = sourceEphemeral ? [] : store.workspaces.filter { workspace in
+                !workspace.ephemeral && sessionTargets.contains { ownerWorkspaceID(ofSession: $0) != workspace.id }
             }
             if !targets.isEmpty {
                 let moveTo = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
@@ -115,14 +121,19 @@ extension WorkspaceSidebar.Coordinator {
             close.representedObject = SessionBatchRequest(sessionIDs: sessionTargets)
             menu.addItem(close)
         case .workspace:
-            let newSession = NSMenuItem(title: "New Session", action: #selector(menuNewSession(_:)), keyEquivalent: "")
-            newSession.target = self
-            newSession.representedObject = node
-            menu.addItem(newSession)
-            let openSession = NSMenuItem(title: "Open Directory…", action: #selector(menuOpenSession(_:)), keyEquivalent: "")
-            openSession.target = self
-            openSession.representedObject = node
-            menu.addItem(openSession)
+            // New Session / Open Directory… add a plain local session — meaningless on an ephemeral tmux
+            // mirror (a plain session there would be killed on detach), so omit them for a mirror row.
+            let workspaceEphemeral = store.workspaces.first(where: { $0.id == node.id })?.ephemeral == true
+            if !workspaceEphemeral {
+                let newSession = NSMenuItem(title: "New Session", action: #selector(menuNewSession(_:)), keyEquivalent: "")
+                newSession.target = self
+                newSession.representedObject = node
+                menu.addItem(newSession)
+                let openSession = NSMenuItem(title: "Open Directory…", action: #selector(menuOpenSession(_:)), keyEquivalent: "")
+                openSession.target = self
+                openSession.representedObject = node
+                menu.addItem(openSession)
+            }
             // "Focus"/"Unfocus" collapses the tree to this workspace's subtree (or restores all when it
             // is already the focused one); the label reflects the current state.
             let focused = store.focusedWorkspaceID == node.id
@@ -134,7 +145,7 @@ extension WorkspaceSidebar.Coordinator {
             let delete = NSMenuItem(title: "Delete Workspace", action: #selector(menuDeleteWorkspace(_:)), keyEquivalent: "")
             delete.target = self
             delete.representedObject = node
-            delete.isEnabled = store.canRemoveWorkspace
+            delete.isEnabled = store.canRemoveWorkspace(node.id)
             menu.addItem(delete)
         }
         return menu
@@ -167,7 +178,10 @@ extension WorkspaceSidebar.Coordinator {
     @objc private func menuClose(_ sender: NSMenuItem) {
         guard let request = sender.representedObject as? SessionBatchRequest else { return }
         // pass THIS sidebar's window-local store — a background window's Close must target its own
-        // session, not the frontmost window's (which `AppActions.store` would resolve to).
+        // session, not the frontmost window's (which `AppActions.store` would resolve to); a context menu
+        // can fire on a background window without making it key. `closeSessions` confirms (per the setting)
+        // then, for a single selection, delegates to the backend-aware `closeSession(in:)` — a tmux-backed
+        // session routes to kill-window (torn down by the %window-close echo); a normal session closes locally.
         actions.closeSessions(request.sessionIDs, in: store)
     }
 

@@ -2,6 +2,24 @@ import agtermCore
 import AppKit
 import SwiftUI
 
+/// The outcome of addressing a tmux connection for `tmux.detach`/`tmux.kill`: matched exactly one live
+/// connection (`.ok` carries its mirror-workspace uuid so the arm can echo it in `result.id` per the
+/// mutating-command convention — the no-id single-connection form is where the caller learns which
+/// connection was acted on), matched none, or more than one (a nil id with several live connections,
+/// or an id prefix matching several) and the caller must name which.
+enum TmuxSelection { case ok(UUID), notFound, ambiguous }
+
+/// The outcome of `attachTmux`/`attachLocal`, discriminated so the control arm can report each failure
+/// distinctly (a spawn failure must not read as "no open window"). `.attached` carries the connection's
+/// mirror-workspace uuid — the id `tmux.list`/`tmux.detach`/`tmux.kill` address — for both a fresh
+/// attach and the dedup-focus path, so `tmux.attach` can echo it per the mutating-command convention.
+enum TmuxAttachOutcome: Equatable {
+    case attached(UUID)
+    case invalidHost
+    case noWindow
+    case spawnFailed
+}
+
 /// The user-facing actions shared by the toolbar / bottom-bar buttons (`ContentView`) and the
 /// menu bar (`agtermApp`'s `.commands`), so the two never drift. `@MainActor`; holds the store, and
 /// resolves the focused terminal for font commands.
@@ -116,7 +134,16 @@ final class AppActions {
 
     func newSession() {
         guard uiActionsEnabled else { return }
-        guard let store, let workspaceID = store.currentWorkspaceID,
+        guard let store else { return }
+        // In a tmux-backed session, "New Session" creates a new WINDOW in the attached tmux session
+        // (like iTerm2 ⌘T) — it comes back as a %window-add → a new agterm session. A normal session
+        // keeps the master behavior: a local shell in the current workspace.
+        if let active = store.activeSession, active.tmuxBinding != nil,
+           let controller = tmuxControllerOwning(active.id) {
+            controller.newWindow()
+            return
+        }
+        guard let workspaceID = store.currentWorkspaceID,
               let session = store.addSession(toWorkspace: workspaceID, cwd: resolvedNewSessionCwd())
         else { return }
         // creating + selecting a session is a user-initiated selection: note activity so it buys the full
@@ -219,7 +246,9 @@ final class AppActions {
     /// background window's sidebar must close ITS session, not the frontmost window's — so it is passed in
     /// rather than resolved via the frontmost `activeStore`. The ⌘W/menu/palette path uses
     /// `closeActiveSession` (which acts on the frontmost active session); the control channel's
-    /// `session.close` closes directly, without a prompt.
+    /// `session.close` closes directly, without a prompt. Backend-aware: after the confirm, a tmux-backed
+    /// session routes to `kill-window` via `closeTmuxSession` (the local session is torn down by the
+    /// `%window-close` echo); a normal session closes in `store`.
     func closeSession(_ id: UUID, in store: AppStore) {
         guard uiActionsEnabled else { return }
         guard let session = store.session(withID: id) else { return }
@@ -275,7 +304,12 @@ final class AppActions {
         settingsModel?.settings.closeGraceUndoEnabled ?? true
     }
 
+    /// Perform the close after the confirm gate. Backend-aware: a tmux-backed session routes to
+    /// `kill-window` via `closeTmuxSession` (the local session is torn down by the `%window-close` echo),
+    /// so it bypasses the grace-period undo; a normal session gets the grace-period soft close (undoable)
+    /// when enabled, else an immediate close.
     private func closeSessionAfterConfirmation(_ id: UUID, in store: AppStore) {
+        if closeTmuxSession(id) { return }
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {
                 _ = store.softCloseSession(id)
@@ -285,6 +319,33 @@ final class AppActions {
         }
     }
 
+    /// Rename a session — backend-aware (frontmost store). A tmux-backed session routes to `rename-window`
+    /// via `renameTmuxSession`; a normal session renames locally. Menu/palette only — per-window surfaces
+    /// (the inline rename editor, the `session.rename` arm) call the tmux router + their own store instead.
+    func renameSession(_ id: UUID, to name: String) {
+        if renameTmuxSession(id, to: name) { return }
+        store?.renameSession(id, to: name)
+    }
+
+    /// Store-INDEPENDENT tmux router: if `id` is a tmux-backed session, route a close to its owning
+    /// controller (`kill-window`) and return true; else false. `tmuxControllerOwning` searches every live
+    /// connection regardless of which window's store holds the session, so the control channel (which
+    /// resolves an explicit store) and the frontmost-store GUI wrapper share one router. The local session
+    /// is torn down later by the `%window-close` echo, so callers must NOT also close it when this is true.
+    @discardableResult
+    func closeTmuxSession(_ id: UUID) -> Bool {
+        guard let controller = tmuxControllerOwning(id) else { return false }
+        return controller.killWindow(session: id)
+    }
+
+    /// Store-INDEPENDENT tmux router for rename (`rename-window`); the `%window-renamed` echo applies the
+    /// local name. Returns whether `id` was a tmux session (and thus handled).
+    @discardableResult
+    func renameTmuxSession(_ id: UUID, to name: String) -> Bool {
+        guard let controller = tmuxControllerOwning(id) else { return false }
+        return controller.renameWindow(session: id, to: name)
+    }
+
     /// Clear the active session's agent-status indicator back to idle (the same effect as `agtermctl
     /// session status idle` and the sidebar row's "Clear Status"). No-op when nothing is selected.
     func clearActiveSessionStatus() {
@@ -292,6 +353,15 @@ final class AppActions {
         guard let store, let id = store.selectedSessionID else { return }
         store.setAgentIndicator(AgentIndicator(), forSession: id)
     }
+
+    // MARK: - Tmux controllers (attach/detach/kill lifecycle in AppActions+Tmux.swift)
+
+    /// One `TmuxController` per LIVE tmux connection. Each `attachTmux`/`attachLocal` creates a FRESH
+    /// controller (so several sessions on one host, and a detach→reattach, each get their own gateway +
+    /// workspace + model); a controller prunes itself here on teardown via `onClose`. Internal (not
+    /// private) so the `AppActions+Tmux.swift` extension can reach it — a stored property must live on the
+    /// class body, not in an extension.
+    var tmuxControllers: [TmuxController] = []
 
     /// Re-read and re-parse `keymap.conf`, re-rendering the data-driven menu shortcuts and rebuilding
     /// the custom-command runner + the palette's custom items. Shared by the View menu item, the
@@ -414,11 +484,22 @@ final class AppActions {
 
     /// Delete a workspace and all of its sessions. Confirms first when the workspace still has
     /// sessions (the delete ends their shells); an empty workspace deletes without a prompt.
+    /// A tmux mirror workspace deletes as a DETACH (its shells survive server-side), so it gets
+    /// detach wording — the standard "ends their running shells" confirm would misinform.
     /// No-ops when only one workspace remains — one is always kept.
     func deleteWorkspace(_ workspaceID: UUID) {
         guard uiActionsEnabled else { return }
-        guard let store, store.canRemoveWorkspace,
+        guard let store, store.canRemoveWorkspace(workspaceID),
               let workspace = store.workspaces.first(where: { $0.id == workspaceID }) else { return }
+        // A tmux mirror is an ephemeral workspace backed by a live TmuxController; route its delete to a
+        // detach (which removes the workspace via teardown) so the gateway + relay sockets are freed, not
+        // orphaned. A normal workspace has no controller and falls through to the plain removal.
+        if workspace.ephemeral {
+            if !workspace.sessions.isEmpty, !confirmDetachTmux(workspace) { return }
+            if detachTmux(forConnectionWorkspace: workspaceID) { return }
+            store.removeWorkspace(workspaceID)   // mirror with no live controller (already torn down)
+            return
+        }
         if !workspace.sessions.isEmpty, !confirmDeleteWorkspace(workspace) { return }
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {
@@ -438,6 +519,19 @@ final class AppActions {
 
     private func confirmDeleteWorkspace(_ workspace: Workspace) -> Bool {
         confirmDelete(name: workspace.name, sessionCount: workspace.sessions.count)
+    }
+
+    /// The confirm for deleting a tmux MIRROR workspace, which detaches rather than kills: the tmux
+    /// session and its shells keep running on the server (reattach later with `tmux attach`), so the
+    /// wording must not claim the shells end. Returns whether the user confirmed.
+    private func confirmDetachTmux(_ workspace: Workspace) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Detach “\(workspace.name)”?"
+        alert.informativeText = "This detaches the tmux session. Its shells keep running on the server; reattach with tmux attach."
+        alert.addButton(withTitle: "Detach")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// A standard warning confirm for deleting a named container (workspace or window) that still

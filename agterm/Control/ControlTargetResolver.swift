@@ -15,8 +15,13 @@ final class ControlTargetResolver {
     private lazy var emptyStore = AppStore()
     private var store: AppStore { library.activeStore ?? emptyStore }
 
-    init(library: WindowLibrary) {
+    /// Resolves a `tmux:` target payload to a mirrored session id (injected by `ControlServer` from
+    /// `AppActions.tmuxSession(forTarget:)`; nil in tests that exercise only UUID/prefix resolution).
+    private let tmuxLookup: ((String) -> UUID?)?
+
+    init(library: WindowLibrary, tmuxLookup: ((String) -> UUID?)? = nil) {
         self.library = library
+        self.tmuxLookup = tmuxLookup
     }
 
     // MARK: - Window resolution & cross-window targeting
@@ -92,6 +97,16 @@ final class ControlTargetResolver {
     /// The session target as a `(store, id)` result, used by both `resolveSession` and the async
     /// `session.type` path. See `resolveSession` for the windowed/cross-window rules.
     func resolveSessionTarget(_ target: String?, window: String?) -> Resolution<(AppStore, UUID)> {
+        // `tmux:%pane` / `tmux:@window` sugar: map to the mirrored session's UUID up front, then let the
+        // normal cross-window id resolution find its owning store. A miss is the pinned not-found string
+        // with the ORIGINAL sugar echoed, so scripts see what they typed.
+        var target = target
+        if let raw = trimmed(target), raw.lowercased().hasPrefix("tmux:") {
+            guard let id = tmuxLookup?(String(raw.dropFirst("tmux:".count))) else {
+                return .failure(ControlResponse(ok: false, error: "no such session: \(raw)"))
+            }
+            target = id.uuidString
+        }
         switch resolveWindowStore(window) {
         case .failure(let response):
             return .failure(response)

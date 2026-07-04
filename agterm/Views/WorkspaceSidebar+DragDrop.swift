@@ -128,21 +128,38 @@ extension WorkspaceSidebar.Coordinator {
         guard !sessionIDs.isEmpty, let node = item as? SidebarNode else { return nil }
 
         let target: SidebarDrop.SessionDropTarget
+        let targetWorkspace: UUID
         switch node.kind {
         case .workspace:
             let count = store.workspaces.first(where: { $0.id == node.id })?.sessions.count ?? 0
             target = .workspaceRow(id: node.id, sessionCount: count)
+            targetWorkspace = node.id
         case .session:
             guard let drop = store.sessionLocation(ofSession: node.id) else { return nil }
             target = .sessionRow(workspace: drop.workspace, sessionIndex: drop.index, sessionCount: drop.count)
+            targetWorkspace = drop.workspace
         }
 
         let sources = sessionIDs.compactMap { id -> SidebarDrop.SessionSource? in
             guard let source = store.sessionLocation(ofSession: id) else { return nil }
             return SidebarDrop.SessionSource(workspace: source.workspace, index: source.index)
         }
-        guard sources.count == sessionIDs.count,
-              let move = SidebarDrop.resolveSessions(sources: sources, target: target, childIndex: index)
+        guard sources.count == sessionIDs.count else { return nil }
+
+        // A tmux mirror (ephemeral workspace) hosts ONLY its controller's tmux-backed sessions, so a
+        // CROSS-mirror move is refused at the store (`moveSession` returns false) and hidden from the
+        // context menu + palette; decline it here too, else `validateDrop` shows a green drop highlight
+        // and `acceptDrop` silently no-ops (the refused Bool is discarded). A same-workspace reorder
+        // inside a mirror is exempt (its sources share `targetWorkspace`), matching the store's boundary check.
+        let targetEphemeral = store.workspaces.first(where: { $0.id == targetWorkspace })?.ephemeral == true
+        if sources.contains(where: { src in
+            src.workspace != targetWorkspace
+                && (targetEphemeral || store.workspaces.first(where: { $0.id == src.workspace })?.ephemeral == true)
+        }) {
+            return nil
+        }
+
+        guard let move = SidebarDrop.resolveSessions(sources: sources, target: target, childIndex: index)
         else { return nil }
         return SessionMove(sessionIDs: sessionIDs, workspace: move.workspace,
                            dropChildIndex: move.dropChildIndex, destination: move.destination)
