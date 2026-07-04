@@ -1,4 +1,8 @@
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 import agtermCore
 
@@ -43,7 +47,12 @@ struct SocketClient {
         guard path.utf8.count < 104 else {
             throw SocketClientError("socket path too long (\(path.utf8.count) bytes): \(path)")
         }
+#if canImport(Darwin)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+#else
+        // Glibc types SOCK_STREAM as the __socket_type enum, not Int32.
+        let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+#endif
         guard fd >= 0 else { throw SocketClientError("socket() failed: \(String(cString: strerror(errno)))") }
 
         var addr = sockaddr_un()
@@ -59,7 +68,11 @@ struct SocketClient {
 
         let result = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+#if canImport(Darwin)
                 Darwin.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+#else
+                Glibc.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+#endif
             }
         }
         guard result == 0 else {
@@ -132,6 +145,9 @@ struct SocketClient {
         if let windows = response.result?.windows {
             return formatWindows(windows)
         }
+        if let connections = response.result?.tmuxConnections {
+            return formatTmuxConnections(connections)
+        }
         if let themes = response.result?.themes {
             return formatThemes(themes, current: response.result?.theme)
         }
@@ -153,6 +169,19 @@ struct SocketClient {
             return id
         }
         return "ok"
+    }
+
+    /// Render the `tmux.list` payload: one connection per line as `<id>  <host>/<session>  [win1, win2]`
+    /// (host/session is the connection's identity — two connections to one host stay distinguishable),
+    /// or a friendly note when there are none.
+    static func formatTmuxConnections(_ connections: [ControlTmuxNode]) -> String {
+        if connections.isEmpty { return "no tmux connections" }
+        return connections
+            .map { node in
+                let identity = node.session.map { "\(node.host)/\($0)" } ?? node.host
+                return "\(node.id)  \(identity)  [\(node.windows.joined(separator: ", "))]"
+            }
+            .joined(separator: "\n")
     }
 
     /// Render the `theme.list` payload as one theme name per line, the current theme marked with `* `

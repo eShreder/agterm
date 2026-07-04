@@ -36,6 +36,34 @@ struct CommandsTests {
         #expect(try request(["workspace", "new"]) == ControlRequest(cmd: .workspaceNew, args: ControlArgs(name: nil)))
     }
 
+    @Test func tmuxAttachWithHostAndOptions() throws {
+        let expected = ControlRequest(cmd: .tmuxAttach,
+                                      args: ControlArgs(name: "dev", workspace: "servers", host: "user@host"))
+        #expect(try request(["tmux", "attach", "user@host", "--session", "dev", "--workspace", "servers"]) == expected)
+    }
+
+    @Test func tmuxAttachDefaultsSessionAndWorkspaceNil() throws {
+        #expect(try request(["tmux", "attach", "user@host"])
+            == ControlRequest(cmd: .tmuxAttach, args: ControlArgs(name: nil, workspace: nil, host: "user@host")))
+    }
+
+    @Test func tmuxAttachRequiresHost() {
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["tmux", "attach"]) }
+    }
+
+    @Test func tmuxListTakesNoTarget() throws {
+        #expect(try request(["tmux", "list"]) == ControlRequest(cmd: .tmuxList))
+    }
+
+    @Test func tmuxDetachWithAndWithoutConnectionId() throws {
+        #expect(try request(["tmux", "detach", "9f3c"]) == ControlRequest(cmd: .tmuxDetach, target: "9f3c"))
+        #expect(try request(["tmux", "detach"]) == ControlRequest(cmd: .tmuxDetach, target: nil))
+    }
+
+    @Test func tmuxKillWithConnectionId() throws {
+        #expect(try request(["tmux", "kill", "9f3c"]) == ControlRequest(cmd: .tmuxKill, target: "9f3c"))
+    }
+
     @Test func workspaceRename() throws {
         let expected = ControlRequest(cmd: .workspaceRename, target: "9f3c", args: ControlArgs(name: "Renamed"))
         #expect(try request(["workspace", "rename", "Renamed", "--target", "9f3c"]) == expected)
@@ -921,6 +949,25 @@ struct CommandsTests {
     @Test func socketPathFallsBackToTmpWithoutHome() throws {
         let command = try Tree.parse([])
         #expect(command.options.socketPath(env: [:]) == "/tmp/agterm/agterm.sock")
+    }
+
+    @Test func socketPathHonorsControlSocketEnv() throws {
+        let options = try BasicOptions.parse([])
+        let path = options.socketPath(env: ["AGTERM_CONTROL_SOCKET": "/agterm/agterm.sock",
+                                            "AGTERM_STATE_DIR": "/tmp/state", "HOME": "/Users/x"])
+        #expect(path == "/agterm/agterm.sock")
+    }
+
+    @Test func socketPathExplicitFlagBeatsControlSocketEnv() throws {
+        let options = try BasicOptions.parse(["--socket", "/tmp/explicit.sock"])
+        let path = options.socketPath(env: ["AGTERM_CONTROL_SOCKET": "/agterm/agterm.sock"])
+        #expect(path == "/tmp/explicit.sock")
+    }
+
+    @Test func socketPathIgnoresEmptyControlSocketEnv() throws {
+        let options = try BasicOptions.parse([])
+        let path = options.socketPath(env: ["AGTERM_CONTROL_SOCKET": "", "AGTERM_STATE_DIR": "/tmp/state"])
+        #expect(path == "/tmp/state/agterm.sock")
     }
 
     // MARK: - session background

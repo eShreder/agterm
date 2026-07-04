@@ -80,6 +80,18 @@ jobs:
           file: coverage.lcov
           format: lcov
 
+  linux:
+    name: Linux agtermctl build
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v7
+      - name: swift build (Linux agtermctl)
+        working-directory: agtermCore
+        run: swift build --product agtermctl
+
   lint:
     name: swiftlint
     needs: changes

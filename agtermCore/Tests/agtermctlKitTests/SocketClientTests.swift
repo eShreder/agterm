@@ -260,6 +260,24 @@ struct SocketClientTests {
         #expect(out == "")
     }
 
+    @Test func formatResponseTmuxConnections() {
+        let connections = [
+            ControlTmuxNode(id: "9f3c", host: "user@host", session: "dev", windows: ["editor", "logs"]),
+            ControlTmuxNode(id: "0a12", host: "local", session: nil, windows: ["window"]),
+        ]
+        let out = SocketClient.formatResponse(
+            ControlResponse(ok: true, result: ControlResult(tmuxConnections: connections)), json: false)
+        let lines = out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // host/session is the connection identity; a nil session (older payload) renders host alone.
+        #expect(lines == ["9f3c  user@host/dev  [editor, logs]", "0a12  local  [window]"])
+    }
+
+    @Test func formatResponseEmptyTmuxConnections() {
+        let out = SocketClient.formatResponse(
+            ControlResponse(ok: true, result: ControlResult(tmuxConnections: [])), json: false)
+        #expect(out == "no tmux connections")
+    }
+
     @Test func formatResponseThemesMarksCurrent() {
         let response = ControlResponse(ok: true, result: ControlResult(theme: "Nord", themes: ["Dracula", "Nord"]))
         let out = SocketClient.formatResponse(response, json: false)
