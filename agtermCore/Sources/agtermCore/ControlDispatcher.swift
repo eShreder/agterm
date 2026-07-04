@@ -143,6 +143,10 @@ public struct ControlDispatcher {
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
                 .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen:
             return await dispatchWindowCommand(request)
+        case .tmuxAttach, .tmuxDetach, .tmuxList, .tmuxKill:
+            // tmux.* is NOT dispatcher-owned: it drives live TmuxController side effects, so it returns
+            // nil and falls through to ControlServer's switch (the documented not-yet-migrated path).
+            return nil
         }
     }
 

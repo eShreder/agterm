@@ -53,6 +53,18 @@ struct AppStoreTests {
         #expect(store.workspaces.map(\.name) == ["work", "personal"])
     }
 
+    @Test func ephemeralWorkspaceIsExcludedFromSnapshot() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let tmux = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        // Both are live in the store...
+        #expect(store.workspaces.map(\.id) == [work.id, tmux.id])
+        // ...but only the non-ephemeral one persists.
+        let snapshot = store.snapshot()
+        #expect(snapshot.workspaces.map(\.id) == [work.id])
+        #expect(snapshot.workspaces.map(\.name) == ["work"])
+    }
+
     @Test func addSessionAppendsAndSelects() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")

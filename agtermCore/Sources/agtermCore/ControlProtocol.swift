@@ -57,6 +57,10 @@ public enum Command: String, Codable, Sendable {
     case themeSet = "theme.set"
     case themeList = "theme.list"
     case restoreClear = "restore.clear"
+    case tmuxAttach = "tmux.attach"
+    case tmuxDetach = "tmux.detach"
+    case tmuxList = "tmux.list"
+    case tmuxKill = "tmux.kill"
 }
 
 /// A bag of optional command parameters. Each command reads only the fields it needs; the rest stay
@@ -175,6 +179,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// (`NSSound(named:)`, e.g. `Glass`, also resolving custom sounds in `~/Library/Sounds`). nil/empty means
     /// no per-call sound — the app may still play the Settings "Blocked sound" default on a `blocked` status.
     public var sound: String?
+    /// The ssh host for `tmux.attach` (e.g. `user@host`). Required by that command.
+    public var host: String?
 
     public init(name: String? = nil, cwd: String? = nil, workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, text: String? = nil, select: Bool? = nil, mode: String? = nil,
@@ -186,7 +192,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 status: String? = nil, blink: Bool? = nil, autoReset: Bool? = nil, sound: String? = nil,
                 ratio: Double? = nil, ratioDelta: Double? = nil,
                 path: String? = nil, color: String? = nil, opacity: Double? = nil, fit: String? = nil,
-                position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil) {
+                position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil,
+                host: String? = nil) {
         self.name = name
         self.cwd = cwd
         self.workspace = workspace
@@ -226,6 +233,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.repeats = repeats
         self.all = all
         self.lines = lines
+        self.host = host
     }
 }
 
@@ -277,11 +285,18 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// side of the notification badge: `notify` (and terminal OSC 9/777) raise it, `session.seen` clears it.
     /// Ephemeral like `status` — never persisted, so it resets to nil on restart.
     public let unseen: Int?
+    /// The tmux window this session mirrors (`@N`) when it is tmux-backed, else nil (omitted from the
+    /// JSON). With `tmuxPane`, the read side of the `tmux:` target addressing.
+    public let tmuxWindow: String?
+    /// The mirrored window's LEADING tmux pane (`%N`) — what a container hook passes as
+    /// `--target tmux:$TMUX_PANE`; nil until the first layout arrives / for a local session.
+    public let tmuxPane: String?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 overlay: Bool = false, scratch: Bool = false, flagged: Bool = false,
                 foreground: [String]? = nil, splitForeground: [String]? = nil, status: String? = nil,
-                statusPane: String? = nil, background: BackgroundWatermark? = nil, unseen: Int? = nil) {
+                statusPane: String? = nil, background: BackgroundWatermark? = nil, unseen: Int? = nil,
+                tmuxWindow: String? = nil, tmuxPane: String? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -297,6 +312,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.statusPane = statusPane
         self.background = background
         self.unseen = unseen
+        self.tmuxWindow = tmuxWindow
+        self.tmuxPane = tmuxPane
     }
 }
 
@@ -373,6 +390,23 @@ public struct ControlWindowNode: Codable, Sendable, Equatable {
 
 /// The successful payload: a new/affected id for mutating commands, a tree for `tree`, the selected text
 /// for `session.copy`. All optional.
+/// One live tmux `-CC` connection in the `tmux.list` result: its workspace uuid (the id used to
+/// address `tmux.detach`/`tmux.kill`), the target host (`local` for a local attach), the tmux
+/// SESSION name (with `host` it forms the connection's identity, so two connections to the same
+/// host stay distinguishable), and the display names of its mirrored windows.
+public struct ControlTmuxNode: Codable, Sendable, Equatable {
+    public var id: String
+    public var host: String
+    public var session: String?
+    public var windows: [String]
+    public init(id: String, host: String, session: String? = nil, windows: [String]) {
+        self.id = id
+        self.host = host
+        self.session = session
+        self.windows = windows
+    }
+}
+
 public struct ControlResult: Codable, Sendable, Equatable {
     public var id: String?
     public var tree: ControlTree?
@@ -394,10 +428,13 @@ public struct ControlResult: Codable, Sendable, Equatable {
     /// The applied (clamped) left-pane split fraction echoed by `session.resize`, so a script can see
     /// where the divider landed after clamping / a relative nudge.
     public var ratio: Double?
+    /// The live tmux `-CC` connections for `tmux.list`.
+    public var tmuxConnections: [ControlTmuxNode]?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
-                theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil) {
+                theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
+                tmuxConnections: [ControlTmuxNode]? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
@@ -407,6 +444,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.theme = theme
         self.themes = themes
         self.ratio = ratio
+        self.tmuxConnections = tmuxConnections
     }
 }
 
