@@ -12,6 +12,10 @@ paths:
   - "agtermCore/Sources/agtermCore/CLIInstall.swift"
   - "agtermCore/Sources/agtermCore/AgentHooksInstall.swift"
   - "agtermCore/Sources/agtermCore/SkillInstall.swift"
+  - "agterm/Tmux/*.swift"
+  - "agtermCore/Sources/agtermCore/Tmux*.swift"
+  - "agtermCore/Sources/agtermCore/RelayProtocol.swift"
+  - "agtermCore/Sources/agtermCore/PTYProcess.swift"
   - "agtermUITests/Control*.swift"
   - "agtermUITests/SessionTextUITests.swift"
   - "agterm/Resources/agent-skill/**"
@@ -102,7 +106,7 @@ paths:
   The skill is a REFERENCE/knowledge skill (both user-invocable via `/agterm` and model-triggered,
   `allowed-tools: Bash(agtermctl *)`; the agent-neutral `description` carries the trigger nouns since
   Codex may ignore the extra `when_to_use` field — unknown frontmatter is harmless),
-  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 53-command
+  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 57-command
   summary + the image-display helper + a troubleshooting/reporting pointer;
   `reference.md` full per-command detail + keymap format; `examples.md` agtermctl recipes;
   `troubleshooting.md` diagnosing the common problems (keymap editor, custom actions,
@@ -147,7 +151,11 @@ paths:
   via `ControlResolve.socketPath`.
   `ControlServer.defaultSocketPath()` adds an `AGTERM_CONTROL_SOCKET` env override that takes precedence
   (used by XCUITests, whose sandboxed `AGTERM_STATE_DIR` container path exceeds the `sun_path` ~104-byte
-  limit); the CLI's `--socket` flag is the user-facing equivalent.
+  limit).
+  The CLI honors the SAME `AGTERM_CONTROL_SOCKET` env as its default socket
+  (precedence `--socket` -> `AGTERM_CONTROL_SOCKET` -> `AGTERM_STATE_DIR` -> app-support,
+  `BasicOptions.socketPath(env:)`, unit-tested via the injectable env) — what a forwarded-socket
+  container exports instead of passing `--socket` on every call (`docs/container-control.md`).
   The socket is `chmod 0600`.
   Each accepted connection sets `SO_RCVTIMEO` (5 s, alongside `SO_NOSIGPIPE`) so a stalled client can't
   wedge the serial accept loop — a timed-out `read()` returns `EAGAIN`, which `readLine` (any non-`EINTR`
@@ -172,8 +180,9 @@ paths:
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (53 commands):**
+- **Command catalog (57 commands):**
   - `tree`
+  - `tmux.attach`/`tmux.detach`/`tmux.list`/`tmux.kill` (see the tmux section)
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
   - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.seen`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.resize`/`session.overlay.result`
   - `quick`
@@ -854,7 +863,126 @@ paths:
   + `WatermarkConfigTests` (incl. the `color*` overlay cases) + `WatermarkStorageTests` + `CommandsTests`
   (CLI parse + bad-arg rejection) + the e2e `testSessionBackgroundSetClearAndValidation` in `ControlAPIUITests`
   (image/text/color set/clear + tree read-back).
+  **tmux (`-CC` native sessions via a local relay — no libghostty fork).**
+  `tmux.attach` (`args.host` required — any ssh target — plus `args.name` reused as the tmux session
+  name, default `main`) spawns
+  `ssh -tt <host> tmux -CC …` and mirrors each tmux window into a fresh EPHEMERAL "tmux: host/session"
+  workspace (`Workspace.ephemeral`, NOT persisted, so it never lands in `workspaces.json`); a repeat
+  attach to an already-mirrored host+session just focuses that connection.
+  `tmux.attach` returns the connection id in `result.id` (the mirror-workspace uuid — the SAME id for
+  a fresh attach and the dedup-focus path) per the mutating-command convention; its failures are
+  discriminated (`AppActions.TmuxAttachOutcome`): `invalid ssh host` (empty or `-`-prefixed),
+  `no open window`, and `tmux attach failed to spawn ssh` (the child never launched) each report their
+  own error, never conflated.
+  `tmux.list` returns the live connections as `ControlResult.tmuxConnections` (`[ControlTmuxNode]` = the
+  workspace uuid + host + tmux SESSION name + window names — host/session is the connection identity,
+  so two connections to one host stay distinguishable) — the uuid is the id used to address
+  `tmux.detach`/`tmux.kill`.
+  `tmux.detach` sends `detach-client` (tmux survives server-side) and `tmux.kill` sends `kill-session`
+  (hard remote teardown); both remove the local workspace and echo the matched connection id in
+  `result.id` (`TmuxSelection.ok` carries the uuid, captured BEFORE the action tears the controller down).
+  `tmux.kill`'s remote half is BEST-EFFORT by design: the reply reports the enqueue, and the local mirror
+  is torn down regardless (the `%exit` echo, else a ~2 s fallback), so on a dead/hung transport the
+  remote session may survive — documented in the skill's `tmux kill` bullet.
+  The id matches like every other control target: case-insensitive full uuid or a unique prefix
+  (≥2 prefix hits = ambiguous), and omitting the id targets the connection
+  ONLY when exactly one is live — with more than one it errors (`multiple tmux connections; specify an
+  id`) rather than silently acting on an arbitrary one (`AppActions.resolveTmux` → `TmuxSelection`).
+  Each connection is one `TmuxController` (app target) over a `TmuxGateway` (host-free `agtermCore` demux
+  of the `-CC` control stream); every tmux window becomes an ORDINARY command-session whose child is
+  `agtermctl tmux-pipe` bridged to the app through a per-window `RelaySocket` — so notifications, ⌘F
+  search, and `view.session` linkage work with no engine fork.
+  The three arms live on `AppActions` (`attachTmux`/`detachTmux`/`killTmux`/`listTmux`),
+  shared with File ▸ Attach tmux Session… and the `session.*` routers.
+  **Backend-aware `session.*`:** `session.close`/`session.rename` on a tmux-backed session (one carrying
+  a `Session.tmuxBinding`) route to `kill-window`/`rename-window` via `AppActions.closeTmuxSession`/`renameTmuxSession`
+  (the store-independent routers that search every live controller), torn down/relabeled by the tmux
+  `%window-close`/`%window-renamed` echo rather than mutating the local mirror directly.
+  This backend-aware seam is shared by ⌘W / File ▸ Close Session, the sidebar context-menu Close, the
+  inline rename editor, and the `session.close`/`session.rename` arms — all four go through `AppActions`
+  so the local mirror can't diverge from the real tmux window.
+  Opening a new tmux window is GUI-only (`AppActions.newSession()` routes to `controller.newWindow()`
+  when the active session has a `tmuxBinding`); control `session.new` is NOT backend-aware (it has no
+  synchronous window→session id to return, since the window materializes async via `%window-add`), so
+  it creates a plain local session — the skill docs scope the new-window claim to the GUI accordingly.
+  `session.split`/`session.scratch`/`session.overlay.*` (and GUI ⌘D/⌘J) on a tmux-backed session stay
+  LOCAL by design — the second pane / scratch / overlay is a local shell, not a tmux pane, and dies with
+  the mirror on detach/kill; documented in the skill's tmux section rather than blocked.
+  A relay child that dies on its OWN (crash, external kill — not a controller teardown) is unmirrored:
+  the stock `onExit` calls `AppActions.tmuxRelayChildExited` → `TmuxController.relayChildExited`, which
+  drops the window's mapping + socket so `tmux.list` and `tmux:` addressing never point at a dead
+  session (the remote window survives; reattach re-mirrors it), and clears the session's `tmuxBinding`
+  — a locally-split mirror session survives via split promotion, and a stale binding would dead-end
+  ⌘T (`newSession` skips the local add but finds no owning controller).
+  The sidebar context-menu Close and the inline rename editor pair the store-independent tmux routers
+  (`closeTmuxSession`/`renameTmuxSession`) with THEIR OWN per-window store for the local half — NOT the
+  frontmost-store `AppActions.closeSession`/`renameSession` wrappers — because a context menu / rename
+  commit can fire on a background window without making it key (the same store-explicit pattern as the
+  `session.close`/`session.rename` arms).
+  Four-point keep-in-sync audit for the tmux family: (1) `case tmuxAttach/tmuxDetach/tmuxList/tmuxKill`
+  + `ControlArgs.host` (session name reuses `args.name`) + `ControlResult.tmuxConnections`/`ControlTmuxNode`
+  in `ControlProtocol.swift`,
+  (2) the four dispatch arms in `ControlServer`, (3) the `tmux attach|detach|list|kill` subcommands in
+  `agtermctlKit` (+ `SocketClient.formatTmuxConnections`), (4) round-trip in `ControlProtocolTests` +
+  the e2e `testTmuxControlValidation` in `ControlAPIUITests`.
+  **Selection discipline:** the mirror sessions are added with `AppStore.addSession(select: false)` —
+  a remote `%window-add` (another attached client, a remote script) must never steal the user's
+  selection or clear their focused-workspace filter.
+  Only two paths select: the initial attach batch calls `TmuxController.focus()` once (lowest-numbered
+  window), and a window THIS client created (`newWindow()`, GUI ⌘T) selects via the
+  `pendingLocalWindowSelect` latch consumed by the next `%window-add` echo.
+  The latch also self-clears on a 5 s timeout (generation-guarded), so a `new-window` that fails
+  (`%error`, no echo) can't leave it armed for the next REMOTE window add to steal focus.
+  Keystrokes typed into a fresh window before its first `%layout-change` delivers the leading-pane id
+  are HELD per-window (`heldInput`, 64 KiB cap — the input mirror of `heldOutput`) and flushed to
+  `send-keys` when the pane arrives, so fast typing right after ⌘T isn't dropped.
+  **PID-reuse / spawn hygiene (`PTYProcess`):** the reap handler holds `pidLock` across
+  `waitpid` + the `pid = -1` clear, and `terminate()`/`deinit` SIGTERM under the same lock,
+  so a kill can never race a just-reaped, recycled PID.
+  Spawn resets the child's signal dispositions/mask (`POSIX_SPAWN_SETSIGDEF|SETSIGMASK`) and starts it
+  as a session leader with the pty as its CONTROLLING terminal (`POSIX_SPAWN_SETSID` + an fd-0 `addopen`
+  of the pts) — ssh's host-key/password prompts read `/dev/tty`, which only resolves with a ctty.
+  **Dev gates:** `AGTERM_TMUX_LOCAL=1` attaches a local `tmux -CC` at launch (no ssh) — the deterministic
+  dev gate for iterating without a remote host; `AGTERM_TMUX_BIN`/`AGTERM_TMUX_SOCKET` pick the tmux
+  binary/server.
+  **Linux portability (HARD): `agtermctl` builds on Linux** — the container-control story
+  (`docs/container-control.md`), enforced by CI's `linux` job (`swift build --product agtermctl`,
+  `swift:6.0` container).
+  Darwin-only transports (`PTYProcess`, `TmuxGateway`, the `TmuxPipeRelay` loop) are gated whole-file
+  or per-block with `#if canImport(Darwin)`; POSIX call sites in CLI-reachable code need Glibc shims
+  (Glibc types `SOCK_STREAM` as an enum — `Int32(SOCK_STREAM.rawValue)`).
+  Anything reachable from `agtermctl` must not assume Darwin.
+  **`tmux:` target addressing sugar (no new command).**
+  `--target tmux:%<pane>` / `tmux:@<window>` resolves a LIVE mirrored session by its tmux pane/window
+  id, for a caller that only has a tmux identity handy — the driving case is a container hook that sees
+  `$TMUX_PANE` in its environment (a forwarded tmux pane) with no agterm UUID to hand it.
+  `ControlTargetResolver.resolveSessionTarget` strips the `tmux:` prefix and maps the payload through
+  the `tmuxLookup` closure (wired from `ControlServer.init` to `AppActions.tmuxSession(forTarget:)`,
+  which searches every live `TmuxController`) BEFORE the normal UUID/prefix resolution runs, so a
+  resolved sugar target then flows through the SAME cross-window session lookup as any other id.
+  A miss (a stale or never-mirrored id) returns the same `no such session: <target>` shape as any other
+  resolution miss, with the ORIGINAL sugar echoed — `no such session: tmux:%999` is the pinned wire
+  contract a test can assert against.
+  Only each mirrored window's LEADING pane is addressable this way (a split window's other panes are
+  not mirrored, the same v1 limitation as the tmux family itself), so `%<pane>` and `@<window>` of the
+  same window resolve to the same session.
+  The READ side rides the `tree` node: `ControlSessionNode.tmuxWindow`/`tmuxPane` (both nil, omitted
+  from the JSON, for a local session) are populated in the `buildTree` session map via
+  `AppActions.tmuxIdentity(forSession:)` — the same live-controller search as the write side — so a
+  script can discover a session's tmux identity from `tree` before addressing it.
+  Four-point keep-in-sync audit for the `tmux:` sugar: (1) no new `Command` case — it rides the EXISTING
+  `target` string on every session-targeting command — plus the two new
+  `ControlSessionNode.tmuxWindow`/`tmuxPane` fields (defaulted-nil init params after `background`) in
+  `ControlProtocol.swift`,
+  (2) the `tmuxLookup` closure in `ControlServer.init` (`ControlTargetResolver.swift` does the prefix
+  strip + resolution) plus the `tmuxIdentity(forSession:)` population in the `buildTree` session map,
+  (3) no new CLI subcommand — every existing `--target` flag accepts the sugar as-is, so there is
+  nothing to add to `agtermctlKit`,
+  (4) round-trip in `ControlProtocolTests` (`treeSessionNodeRoundTripsWithTmuxIdentity` /
+  `treeSessionNodeOmitsTmuxIdentityWhenNil`) plus the miss-path probe appended to
+  `testTmuxControlValidation` in `ControlAPIUITests`.
+
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 53 to match.
+  examples.md recipes) and the command count there is bumped to 57 to match.
 

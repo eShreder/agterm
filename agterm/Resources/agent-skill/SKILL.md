@@ -7,7 +7,9 @@ description: >
   per-session scratch terminal; open or close overlay terminals and read their exit status; display
   an image inline via a bundled helper script; type
   into a session, copy its selection, or search its scrollback; post desktop notifications; manage windows (new, list,
-  select, close, resize, move); change font size; or reload and edit the keymap and the agterm-scoped
+  select, close, resize, move); attach to remote tmux -CC sessions so each tmux window becomes a
+  native session (attach, detach, list, kill, and tmux:-prefixed pane/window addressing); change font
+  size; or reload and edit the keymap and the agterm-scoped
   ghostty config. Also covers the
   window/workspace/session addressing model and the AGTERM_* environment a spawned shell sees, plus
   diagnosing problems (keymap editor, custom actions, logs) and filing a bug as a GitHub issue or a
@@ -18,6 +20,8 @@ when_to_use: >
   session.flag, session.seen, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, config.reload,
   theme.set, theme.list, select theme, edit keymap, show an image, display an image inline, show-image,
+  tmux.attach, tmux.detach, tmux.list, tmux.kill, tmux attach, attach tmux session, tmux -CC,
+  tmux: target, TMUX_PANE, container control socket, AGTERM_CONTROL_SOCKET,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
   keymap editor won't open, custom action / custom command not working, agterm logs, file an agterm
   bug, report an agterm issue, open an agterm discussion / feature request.
@@ -86,6 +90,9 @@ Commands that target a session or workspace take `--target` (default `active`):
 - `active` — the selected session / current workspace.
 - a full UUID (case-insensitive), or a unique **prefix** of one (git-style). Zero matches → `notFound`
   error; two or more → `ambiguous` error listing candidates.
+- `tmux:%<pane>` / `tmux:@<window>` — sugar for a session mirrored from a native tmux attach, e.g.
+  `--target "tmux:$TMUX_PANE"` from inside the mirrored pane itself. See **reference.md** for the
+  container-hook recipe and its leading-pane-only limitation.
 
 `window.*` commands take the window id/prefix/`active` as a positional argument. Other commands accept
 a global `--window <id|prefix|active>` to operate on a specific window's tree (default: the frontmost).
@@ -98,7 +105,7 @@ you work. For any session-scoped command meant to act on *this* session — `ove
 `type`, `text`, `background`, `status`, `copy`, … — pass `--target "$AGTERM_SESSION_ID"`. Omit it and
 you open overlays / type into whatever the user has selected, not your own session.
 
-## Command summary (53 commands)
+## Command summary (57 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -110,8 +117,9 @@ via `session status`: `active`|`completed`|`blocked`, omitted when idle), `statu
 that status: `left` (main) | `right` (split) | `scratch`, from `session status --pane`, omitted when
 unset or idle), `background` (the background
 spec — image/text watermark or solid color — set via `session background`, omitted when none — the read side of set/clear),
-and `unseen` (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session
-seen` — omitted when zero).
+`unseen` (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session
+seen` — omitted when zero), and `tmuxWindow`/`tmuxPane` (the mirrored tmux window/leading-pane ids for a
+`tmux:`-backed session, omitted for a local one).
 
 **workspace** — `new [name]` · `rename <name>` · `delete` · `select` · `move --to up|down|top|bottom` ·
 `focus [on|off|toggle]` (collapse the sidebar tree to a single workspace).
@@ -127,7 +135,10 @@ seen` — omitted when zero).
   after/before an anchor session (id/prefix/`active`) instead of appending — the anchor carries its own
   workspace, so it's mutually exclusive with `--workspace`/`--workspace-name`. `new --after active` =
   create right after the current session.
-- `close` · `select` · `rename <name>`.
+- `close` · `select` · `rename <name>`. **Backend-aware:** on a tmux-backed session (one mirrored from
+  a `tmux -CC` window), `close` routes to `kill-window` and `rename` to `rename-window` — so they
+  round-trip to the remote tmux, not just locally. (Opening a new tmux window is GUI-only: New Session
+  ⌘T on a tmux session; control `session new` always creates a local session.)
 - `go --to next|prev|first|last|next-attention|prev-attention` — move the selection between sessions.
 - `move <workspace>` (relocate) or `move --to up|down|top|bottom` (reorder within the workspace) or
   `move --after SID | --before SID` (place after/before an anchor session; the anchor carries its own
@@ -207,6 +218,17 @@ built-in default ("default ghostty"); an unknown name errors.
 
 **restore** — `restore clear` — clear every session's saved foreground command (the
 restore-running-command capture) so the next restart restores plain shells.
+
+**tmux** — native `tmux -CC` sessions: each remote tmux window becomes a native agterm session (backed
+by a normal local terminal relaying to tmux — no engine fork, so search/notifications work).
+- `tmux attach <host> [--session NAME] [--workspace NAME]` — ssh to `<host>`, attach-or-create the tmux
+  session (`-CC`), and mirror its windows into a `tmux: host/session` workspace. Prints the connection
+  id (also on a repeat attach, which just focuses the existing connection).
+- `tmux list` — active connections: `<id>  <host>/<session>  [window names]` (the id is the tmux
+  workspace uuid).
+- `tmux detach [id]` — soft detach (tmux keeps running server-side); omit id for the only connection.
+- `tmux kill [id]` — hard remote `kill-session`. The id accepts a unique prefix (git-style,
+  case-insensitive) like every other target. v1 shows only a split window's leading pane.
 
 ## Displaying an image inline
 
