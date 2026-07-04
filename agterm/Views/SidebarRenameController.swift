@@ -68,11 +68,16 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
         field.backgroundColor = theme.terminalBackgroundColor ?? .textBackgroundColor
         field.setAccessibilityIdentifier("edit-field")
         field.window?.makeFirstResponder(field)
-        editing = true
         // pause auto-follow while the rename field owns first responder: an armed idle jump would move the
         // outline selection off this row and yank focus into the followed terminal, silently committing the
-        // rename mid-edit. balanced by the resume in `restore` when editing ends.
-        store.suppressAutoFollow()
+        // rename mid-edit. balanced by the single resume in `restore` when editing ends — so take the
+        // suppression only on the FIRST begin of an edit session. a re-entrant beginEditing on the
+        // already-active field (e.g. the Rename Session shortcut pressed again mid-edit) must not stack a
+        // second suppress that `restore`'s lone resume can't balance, which would wedge the counted gate
+        // and leave auto-follow off for the window until relaunch. (switching to ANOTHER row is fine:
+        // makeFirstResponder above ended the prior edit → `restore` already resumed and cleared `editing`.)
+        if !editing { store.suppressAutoFollow() }
+        editing = true
     }
 
     /// Intercepts Esc during an inline rename. The field is focused via `makeFirstResponder`
