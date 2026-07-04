@@ -119,6 +119,24 @@ refocus click is not forwarded into the pty), so the terminal is not at fault. T
 anthropics/claude-code#72188 (mouse-click variant #72273). Workaround: answer before switching away, or
 `Esc` the stuck prompt and let it re-ask.
 
+### "agtermctl can't reach the socket / resize looks wrong inside a container"
+
+To drive agterm from inside a docker container attached via SSH+tmux, forward the control socket and use
+tmux pane addressing.
+Forward the socket from your mac to the remote host (see `docs/container-control.md` for the ssh
+`RemoteForward` config); mount it into the container as a directory, not a file.
+When entering the container, pass two environment variables to `docker exec`: `AGTERM_CONTROL_SOCKET`
+set to the mounted socket path (e.g. `/agterm/agterm.sock`) so agtermctl resolves it instead of the
+default, and `TMUX_PANE` so the container hook knows its pane id.
+The container must build agtermctl from the bundled `agtermCore` package (see the Linux build section
+in docs/container-control.md).
+Inside a mirrored tmux window, address your own session via `--target "tmux:$TMUX_PANE"` — it resolves
+to the leading pane of the mirrored window without needing the agterm UUID.
+Symptom: a long-lived `docker exec` spawned by an older client holds a stale pty size and shows as a
+terminal-resize lag (e.g. nvim redraw corruption).
+Fix: re-enter the container with a fresh `docker exec -it …` to pick up the current window size.
+Full details and recipes: `docs/container-control.md`.
+
 ## Reporting: decide bug vs unsupported FIRST
 
 - A **supported** thing misbehaves (a documented command/feature does the wrong thing, a crash, a parse

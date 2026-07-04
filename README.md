@@ -15,6 +15,7 @@ What it does:
 - **Splits, scratch, and overlays.** Split a session into two shells, open a scratch terminal over it, or run a program in a full or floating overlay without disturbing the shell underneath.
 - **Agent skill.** An installable skill (Help ▸ Install Agent Skill…) teaches Claude Code or Codex the control model and the `agtermctl` commands, so an agent running inside agterm can build its own layout, run overlays, manage windows, and show images inline without you explaining the API.
 - **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. Status hooks for Claude Code, Codex, Pi, and other agents install from Help ▸ Install Agent Status Hooks….
+- **tmux sessions.** Attach to a remote `tmux -CC` session over ssh (File ▸ Attach tmux Session…, or `agtermctl tmux attach`) and each tmux window becomes a native agterm session — rendered by the local engine, searchable, and notifying like any other. Closing or renaming a mirrored session round-trips to `kill-window` / `rename-window` on the remote.
 
 For the real terminal work, rendering, VT parsing, and shell I/O, `agterm` embeds [Ghostty](https://ghostty.org)'s engine (libghostty); everything above is `agterm`'s own.
 
@@ -154,6 +155,8 @@ agterm arranges terminals into a small hierarchy. These are the only terms you n
 
 **Window.** A window is a whole set of workspaces and sessions in its own on-screen macOS window, with its own sidebar. Each window has its own sessions, so "work" and "personal" can run as two separate windows at once, each with its own tree. You keep a library of windows and open one per on-screen window; the windows open at quit reopen on the next launch with their frames.
 
+**tmux session.** Attaching to a remote `tmux -CC` session (over ssh) mirrors it into its own workspace where each tmux window shows up as a native agterm session. The mirror is live, not a restore: closing or renaming a mirrored session runs `kill-window` / `rename-window` on the remote, and detaching leaves tmux running server-side to reattach later. The mirror workspace is not saved across launches; you reattach with `agtermctl tmux attach` (or File ▸ Attach tmux Session…). A v1 limit: a tmux window that is itself split shows only its leading pane.
+
 **Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a single workspace to hide the others, with a one-click way back. The two are independent.
 
 Sidebar session rows support Shift-click range selection and Cmd-click toggling for batch work. Right-clicking inside a multi-selection keeps the batch for Flag/Unflag, Close, and Move to; right-clicking outside narrows to the clicked row. Dragging from a selected row moves the selected sessions as one ordered block.
@@ -184,7 +187,7 @@ The theme picker (View ▸ Select Theme…, or the action palette) previews each
 
 `agterm` can be driven from a script over a local unix-domain socket through a companion CLI, `agtermctl`. This is for personal scripting — fire-and-forget commands that manage workspaces and sessions, inject text, and invoke control actions. There is no terminal-output streaming and no event subscription.
 
-The sections below cover the common cases. All 60 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
+The sections below cover the common cases. All 64 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
 
 The app bundles `agtermctl` inside `agterm.app`. The easiest way to put it on your PATH is **Help ▸ Install Command Line Tool…**, which symlinks the bundled binary into `/usr/local/bin` (the first entry in macOS's default PATH). When that directory is user-writable it installs silently; otherwise it asks once for an administrator password.
 
@@ -197,7 +200,7 @@ cd agtermCore && swift build -c release
 # the binary is at agtermCore/.build/release/agtermctl
 ```
 
-Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
+Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path — `agtermctl` also honors `AGTERM_CONTROL_SOCKET` as its default socket (precedence: `--socket`, then the env var, then the standard location), which is what a shell with the socket forwarded into a container exports instead of passing the flag on every call. The exit code is zero on success, non-zero on error.
 
 `--workspace`/`--target` take an id, a unique id prefix, or `active` — never a name. (`session new` also accepts `--workspace-name <name>` to target a workspace by its sidebar label, plus `--create-workspace` to make it when none matches — the two are mutually exclusive with `--workspace`.) To create a workspace and then open a session in it, capture the printed id:
 
@@ -307,6 +310,17 @@ A global `--window <id>` option on the session, workspace, `tree`, and `font` co
 agtermctl tree --window "$w"                              # the tree of window $w
 agtermctl session new --window "$w" --cwd ~/src/agterm       # open a session in window $w
 ```
+
+`agtermctl tmux` attaches to a remote `tmux -CC` session over ssh and mirrors each of its windows into a native agterm session. `<host>` is any ssh target; `--session` names the tmux session (default `main`):
+
+```sh
+agtermctl tmux attach user@host --session dev   # ssh + tmux -CC; each tmux window becomes a session
+agtermctl tmux list                             # live connections: id  host  [window names]
+agtermctl tmux detach <id>                       # soft detach (tmux keeps running server-side)
+agtermctl tmux kill <id>                          # hard remote kill-session (terminates every window)
+```
+
+On a mirrored session, `session close` runs `kill-window` and `session rename` runs `rename-window` on the remote; `session type`/`copy`/`text`/`search` stay local. The `<id>` for `detach`/`kill` is the mirror-workspace id from `tmux list`; omit it when there is only one connection. Reattaching after an ssh drop is manual.
 
 Inside a session's shell, `agterm` injects environment variables a script can read: `AGTERM_ENABLED=1`, `AGTERM_WINDOW_ID`, `AGTERM_WORKSPACE_ID`, `AGTERM_SESSION_ID`, `AGTERM_SOCKET` (the live control-socket path), `AGTERM_PANE` (which pane this shell runs in — `left` for the main pane, `right` for the split, or `scratch`; unset in an overlay), and `AGTERM_PANE_ID` (a stable per-surface token the agent-status hook forwards as `session status --pane-id`, so a status from a pane whose role went stale — a split survivor promoted into the main pane, then re-split — still resolves to the pane's current slot). So a script running in a session can drive its own window without hard-coding ids:
 
@@ -444,11 +458,13 @@ A generic bash/zsh/fish `shell/integration.sh` (or `.fish`) covers any agent lau
 
 Where the logs and config live, how to read them, and the common problems (a keymap editor that will not open, a custom action that does nothing, missing notifications) are covered in [docs/troubleshooting.md](docs/troubleshooting.md). For a bug, open an [issue](https://github.com/umputun/agterm/issues/new); for a feature request or question, start a [Discussion](https://github.com/umputun/agterm/discussions/new).
 
+Driving agterm from a dev container (forwarding the control socket over ssh, docker env setup, tmux pane addressing) is covered in [docs/container-control.md](docs/container-control.md).
+
 ## Restore limitations
 
 Restore reconstructs the structure, not the running processes. Three limitations follow from the design:
 
-1. Live processes are not reattached — true process survival would require a tmux-style backend, which is out of scope. By default a restored session re-spawns a fresh login shell in its saved working directory. The optional **Restore running commands on restart** toggle (General settings, off by default) re-runs the command each pane had in the foreground at the last clean quit, so a gate `ssh`, `tail -f`, or `top` comes back — but it is a re-run, not a reattach: only a single-process command restores faithfully (pipelines and compound lines do not); a force-quit or crash captures nothing; and the programs named in `restore-denylist.conf` (in the config directory, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`, one command name per line) are skipped so they start fresh rather than re-launching — everything else, including `python manage.py runserver` or `node server.js`, is restored. Edit that file to add or remove entries.
+1. Live processes are not reattached automatically — automatic process survival would require a persistent backend, which restore does not provide (for genuine survival, run your work under `tmux` on a host and reattach with `agtermctl tmux attach`, which is a live mirror, not a restore). By default a restored session re-spawns a fresh login shell in its saved working directory. The optional **Restore running commands on restart** toggle (General settings, off by default) re-runs the command each pane had in the foreground at the last clean quit, so a gate `ssh`, `tail -f`, or `top` comes back — but it is a re-run, not a reattach: only a single-process command restores faithfully (pipelines and compound lines do not); a force-quit or crash captures nothing; and the programs named in `restore-denylist.conf` (in the config directory, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`, one command name per line) are skipped so they start fresh rather than re-launching — everything else, including `python manage.py runserver` or `node server.js`, is restored. Edit that file to add or remove entries.
 2. The saved working directory depends on the `GHOSTTY_ACTION_PWD` callback, which only fires when the shell has Ghostty shell-integration / OSC 7 active (auto-injected for zsh, bash, fish, and nu when the shell-integration resources are present). If the working directory is never reported, a session restores to the directory it was created in.
 3. The live working directory is persisted on quit and on every structural change (adding, closing, moving, renaming, or selecting a session), but not on every `cd` — OSC 7 fires on each prompt redraw, so saving each one would thrash the disk. A crash or force-quit therefore loses only the working-directory changes made since the last structural change or quit.
 

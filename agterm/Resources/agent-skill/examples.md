@@ -524,3 +524,34 @@ agtermctl theme set --dark none              # stop tracking; the light theme st
 agtermctl tree --json --window work          # the "work" window's tree (prefix match)
 agtermctl session new --window work --cwd "$HOME"
 ```
+
+## Attach a native tmux session (no engine fork)
+
+Each remote tmux window becomes a native agterm session; input/output/resize round-trip to tmux over a
+local relay, so search and notifications work like any session.
+
+```bash
+ID=$(agtermctl tmux attach user@host --session dev)   # ssh + tmux -CC, mirror into "tmux: host/dev"; prints the connection id
+agtermctl tmux list                               # <id>  <host>/<session>  [window names]
+agtermctl tmux list --json | jq -r '.result.tmuxConnections[].id'
+agtermctl tmux detach "$ID"                        # tmux keeps running server-side; reattach later
+agtermctl tmux attach user@host --session dev     # reattach (or focus, if still connected; same id)
+agtermctl tmux kill "$ID"                           # hard remote kill-session (ids accept a unique prefix)
+```
+
+On a tmux-backed session, the normal lifecycle verbs route to tmux:
+
+```bash
+agtermctl session rename "build" --target <session-id>   # -> tmux rename-window
+agtermctl session close --target <session-id>            # -> tmux kill-window
+```
+
+## Address your own pane from inside a container hook
+
+A process running inside a mirrored tmux window's leading pane (e.g. a container `exec`'d with tmux's
+`$TMUX_PANE` forwarded into its environment) can address its own session without knowing the agterm
+UUID, via the `tmux:` target sugar:
+
+```bash
+agtermctl session status active --target "tmux:$TMUX_PANE"
+```
