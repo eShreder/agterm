@@ -2,11 +2,13 @@ import ArgumentParser
 import Foundation
 import agtermCore
 
-/// Shared `--pane` validation for the session commands that accept `left|right|scratch` (type, text).
+/// Shared `--pane` validation for the session commands that accept `left|right|scratch` (type, text, status).
 /// Rejects any other value with a clean usage error before the socket round-trip, matching the server-side
 /// switch (so the CLI and server can't drift, and a raw socket client still hits the same check server-side).
+/// These three commands intentionally reuse `StatusPane`'s `left|right|scratch` value set as the shared
+/// pane-addressing vocabulary — the enum is named for agent status but its cases are the pane names.
 func validatePaneArgument(_ pane: String?) throws {
-    if let pane, !["left", "right", "scratch"].contains(pane) {
+    if let pane, StatusPane(rawValue: pane) == nil {
         throw ValidationError("--pane must be left, right, or scratch")
     }
 }
@@ -258,6 +260,7 @@ struct Session: ParsableCommand {
         var sound: String?
         @Option(name: .long, help: "Override the glyph tint for this call only (#rrggbb); reverts on the next status set without it.")
         var color: String?
+        @Option(name: .long, help: "Which pane set this status: left (main), right (split), or scratch. Records the blocked pane so nav lands on it. Defaults to the left pane.") var pane: String?
         @OptionGroup var target: TargetOptions
         @OptionGroup var options: ClientOptions
 
@@ -265,11 +268,12 @@ struct Session: ParsableCommand {
             if let color, !WatermarkConfig.isValidColorHex(color) {
                 throw ValidationError("color must be a #rrggbb hex value")
             }
+            try validatePaneArgument(pane)
         }
 
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .sessionStatus, target: target.target,
-                           args: options.withWindow(ControlArgs(status: state, blink: blink ? true : nil,
+                           args: options.withWindow(ControlArgs(pane: pane, status: state, blink: blink ? true : nil,
                                                                  autoReset: autoReset ? true : nil, sound: sound,
                                                                  color: color)))
         }

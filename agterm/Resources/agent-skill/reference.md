@@ -35,7 +35,9 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split shown), `overlay` (overlay shown), `scratch` (scratch shown), `flagged` (in the
 flagged working-set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
-idle), `foreground`/`splitForeground` (the live argv of each pane's foreground
+idle), `statusPane` (which pane set that status — `left` (main) | `right` (split) | `scratch` — the
+`--pane` value from `session status`, omitted when unset or idle; gated on the same non-idle condition
+as `status`, so it is never reported without a `status`), `foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt), and `background` (the
 background spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
 position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set). Workspace nodes carry
@@ -149,7 +151,7 @@ state; there is no control command to set them.
   `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
-- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--target] [--window W]` —
+- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--pane left|right|scratch] [--target] [--window W]` —
   set the sidebar agent-status glyph. `--blink` pulses it (for attention). `--auto-reset` clears it
   back to idle once the session is visited (use for a one-shot completion flash). `--sound` plays a
   one-shot sound when the status is set: `default` (the system alert sound) or a system sound name
@@ -160,6 +162,18 @@ state; there is no control command to set them.
   `--color` (`#rrggbb`) overrides the glyph tint for THIS call only — it rides the status, so the next
   `session status` without `--color` reverts to the Settings-configured color (a malformed hex errors).
   Use it to distinguish states beyond the fixed palette (e.g. a caller-specific blocked color).
+  `--pane` (`left`|`right`|`scratch`, `left`=main, `right`=split; defaults to `left` when omitted) records
+  which pane set the status. It has two effects: (1) keystroke-clear becomes pane-scoped — a status set
+  from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
+  no longer wiped by foreground typing in the main pane, and only a keystroke in the OWNING pane clears
+  it), and (2) any user-initiated GUI selection of the session lands on the tagged pane — auto-follow,
+  the attention-nav (⌃⌥↑/⌃⌥↓, the Navigate menu), plain session nav (⌥⌘↑/↓/first/last),
+  the command palettes, and a sidebar row click all reveal and focus it, flipping to the split or
+  showing a hidden scratch instead of the main pane. (The socket `session go next-attention|prev-attention`
+  only STEPS the selection to attention sessions; it does not itself move focus into the tagged pane — the
+  reveal is a GUI/auto-follow concern.) An agent that runs in a split or scratch should set its own pane so
+  the user lands on it. The value is read back on `tree` as the session node's `statusPane`. An invalid
+  value errors (`--pane must be left, right, or scratch`).
   An unknown state errors. Setting non-idle is for agents/hooks; `idle` clears it (also available in the GUI).
 - `session flag [on|off|toggle|clear] [--target] [--window W]` — flag/unflag a session for the flagged
   working-set view (a durable, persisted membership). `on`/`off`/`toggle` act on `--target` (default
@@ -395,4 +409,7 @@ user-edited file read at launch — there is no control command for it.
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
 `no open window` (quick/sidebar), `window not open`
 (resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
-`invalid color (expected #rrggbb)` (session status --color). Unknown commands fail to decode and return a structured error, never a crash.
+`invalid color (expected #rrggbb)` (session status --color),
+`--pane must be left, right, or scratch` (the `--pane` value check — the `agtermctl` CLI rejects a bad pane
+with this for session status/type/text, and over the raw socket `session.status` returns this same string;
+`session.type`/`session.text` over the raw socket instead return `invalid pane: <value>`). Unknown commands fail to decode and return a structured error, never a crash.

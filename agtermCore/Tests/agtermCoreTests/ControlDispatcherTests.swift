@@ -367,7 +367,7 @@ struct ControlDispatcherTests {
         #expect(actions.calls == [
             .sessionStatus(target: "session", window: "win",
                            ControlSessionStatusUpdate(status: .blocked, blink: true,
-                                                      autoReset: true, sound: "default", color: "#ff0000"))
+                                                      autoReset: true, sound: "default", color: "#ff0000", pane: nil))
         ])
     }
 
@@ -391,6 +391,46 @@ struct ControlDispatcherTests {
                            ControlSessionStatusUpdate(status: .blocked, blink: nil, autoReset: nil,
                                                       sound: nil, color: nil))
         ])
+    }
+
+    @Test func sessionStatusCarriesValidPaneAndRejectsInvalidPane() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let tagged = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus,
+            target: "session",
+            args: ControlArgs(pane: "right", status: "blocked")
+        ))
+        let badPane = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus,
+            target: "session",
+            args: ControlArgs(pane: "middle", status: "blocked")
+        ))
+
+        #expect(tagged == ControlResponse(ok: true))
+        #expect(badPane == ControlResponse(ok: false, error: "--pane must be left, right, or scratch"))
+        // the invalid pane never reaches actions (status unchanged), only the valid one is recorded.
+        #expect(actions.calls == [
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .blocked, blink: nil,
+                                                      autoReset: nil, sound: nil, pane: .right))
+        ])
+    }
+
+    @Test func sessionStatusColorErrorWinsOverInvalidPane() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        // both --color and --pane are invalid; color is validated first, so the color error wins.
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus,
+            target: "session",
+            args: ControlArgs(pane: "middle", status: "blocked", color: "nope")
+        ))
+
+        #expect(response == ControlResponse(ok: false, error: "invalid color (expected #rrggbb)"))
+        #expect(actions.calls.isEmpty)
     }
 
     @Test func splitScratchFocusAndResizeRouteParsedInputs() async {
