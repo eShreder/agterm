@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.2 - 2026-07-05
+
+### Bug Fixes
+
+- microphone access for command-line tools running inside agterm now works: a hardened-runtime app also needs the audio-input entitlement, not just the usage description added in v0.8.1 @umputun
+
 ## v0.8.1 - 2026-07-05
 
 ### Bug Fixes
