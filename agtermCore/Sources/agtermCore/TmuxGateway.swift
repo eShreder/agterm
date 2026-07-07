@@ -1,7 +1,5 @@
 import Foundation
 
-#if canImport(Darwin)
-
 /// The tmux `-CC` control-mode transport. Combines `PTYProcess` (spawn + async read) with
 /// `TmuxControlParser` (line -> `TmuxEvent`) and `TmuxCommandEncoder` (outbound commands).
 ///
@@ -106,5 +104,3 @@ public final class TmuxGateway: @unchecked Sendable {
     /// terminate it — `PTYProcess.deinit` does not reliably close the fd on its own.
     public func stop() { pty.terminate() }
 }
-
-#endif // The PTY transport is Darwin-only (posix_spawn file actions + DispatchSourceProcess); the Linux agtermctl build (thin socket client) never touches it, so it is compiled out there.

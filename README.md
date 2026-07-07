@@ -424,8 +424,6 @@ A generic bash/zsh/fish `shell/integration.sh` (or `.fish`) covers any agent lau
 
 Where the logs and config live, how to read them, and the common problems (a keymap editor that will not open, a custom action that does nothing, missing notifications) are covered in [docs/troubleshooting.md](docs/troubleshooting.md). For a bug, open an [issue](https://github.com/umputun/agterm/issues/new); for a feature request or question, start a [Discussion](https://github.com/umputun/agterm/discussions/new).
 
-Driving agterm from a dev container (forwarding the control socket over ssh, docker env setup, tmux pane addressing) is covered in [docs/container-control.md](docs/container-control.md).
-
 ## Restore limitations
 
 Restore reconstructs the structure, not the running processes. Three limitations follow from the design:

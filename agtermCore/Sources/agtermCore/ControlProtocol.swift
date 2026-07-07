@@ -288,7 +288,7 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// The tmux window this session mirrors (`@N`) when it is tmux-backed, else nil (omitted from the
     /// JSON). With `tmuxPane`, the read side of the `tmux:` target addressing.
     public let tmuxWindow: String?
-    /// The mirrored window's LEADING tmux pane (`%N`) — what a container hook passes as
+    /// The mirrored window's LEADING tmux pane (`%N`) — what a caller passes as
     /// `--target tmux:$TMUX_PANE`; nil until the first layout arrives / for a local session.
     public let tmuxPane: String?
 

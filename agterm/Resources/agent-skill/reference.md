@@ -7,7 +7,7 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 
 - **Socket resolution** (when `--socket` is omitted): `AGTERM_SOCKET` is the path the running app
   bound; agtermctl resolves the same rendezvous, in precedence order: `AGTERM_CONTROL_SOCKET` (an
-  explicit override — e.g. a forwarded socket path in a container), else `<AGTERM_STATE_DIR>/agterm.sock`,
+  explicit override), else `<AGTERM_STATE_DIR>/agterm.sock`,
   else `<$HOME>/Library/Application Support/agterm/agterm.sock`. Passing `--socket "$AGTERM_SOCKET"` is
   the safe explicit form and always wins over the environment.
 - **`--json`**: prints the raw response object. Without it, mutations print `ok` and `tree`/`window
@@ -36,9 +36,9 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   LEADING pane is addressable this way (a split window's other panes are not mirrored — see the tmux
   section's v1 limitation), so `%<pane>` and `@<window>` of the same window resolve to the same session.
   A miss (stale/unmirrored id) returns the same shape as any other resolution miss:
-  `no such session: tmux:%999`. The container-hook recipe: a process running inside the mirrored pane
-  sees `$TMUX_PANE` in its environment (tmux sets it for every pane), so
-  `agtermctl session status active --target "tmux:$TMUX_PANE"` addresses its own session without
+  `no such session: tmux:%999`. The recipe: when you have a tmux pane id in hand (a `$TMUX_PANE` from a
+  local tmux, or a pane/window id read back from `tree`),
+  `agtermctl session status active --target "tmux:$TMUX_PANE"` addresses the mirrored session without
   knowing the agterm UUID.
 - `--window <id|prefix|active>` (on session/workspace/tree/font/notify commands) picks which window's
   tree to act on; default is the frontmost. With `--window` set, that window must be open. Without it,

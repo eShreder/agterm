@@ -1,8 +1,4 @@
-#if canImport(Darwin)
 import Darwin
-#else
-import Glibc
-#endif
 import Foundation
 import agtermCore
 
@@ -47,12 +43,7 @@ struct SocketClient {
         guard path.utf8.count < 104 else {
             throw SocketClientError("socket path too long (\(path.utf8.count) bytes): \(path)")
         }
-#if canImport(Darwin)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-#else
-        // Glibc types SOCK_STREAM as the __socket_type enum, not Int32.
-        let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
-#endif
         guard fd >= 0 else { throw SocketClientError("socket() failed: \(String(cString: strerror(errno)))") }
 
         var addr = sockaddr_un()
@@ -68,11 +59,7 @@ struct SocketClient {
 
         let result = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-#if canImport(Darwin)
                 Darwin.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
-#else
-                Glibc.connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
-#endif
             }
         }
         guard result == 0 else {

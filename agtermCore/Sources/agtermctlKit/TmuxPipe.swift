@@ -1,9 +1,7 @@
 import ArgumentParser
 import Foundation
 import agtermCore
-#if canImport(Darwin)
 import Darwin
-#endif
 
 /// `agtermctl tmux-pipe --socket <path>` — the per-window relay child.
 ///
@@ -32,8 +30,6 @@ public struct TmuxPipe: ParsableCommand {
         try TmuxPipeRelay(socketPath: socket).run()
     }
 }
-
-#if canImport(Darwin)
 
 /// SIGWINCH flag, set from the async-signal-safe handler and drained in the poll loop. A relay
 /// process is single-purpose and single-threaded, so a process-global is fine here.
@@ -173,13 +169,3 @@ final class TmuxPipeRelay {
         }
     }
 }
-
-#else
-
-/// Non-Darwin stub so `agtermctlKit` still builds host-free on Linux CI (the relay is macOS-only).
-final class TmuxPipeRelay {
-    init(socketPath: String) {}
-    func run() throws { throw ValidationError("tmux-pipe is only supported on macOS") }
-}
-
-#endif

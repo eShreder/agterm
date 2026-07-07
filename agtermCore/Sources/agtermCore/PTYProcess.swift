@@ -1,6 +1,4 @@
 import Foundation
-
-#if canImport(Darwin)
 import Darwin
 
 /// A host-free PTY wrapper: opens a pseudoterminal, `posix_spawn`s a command with the
@@ -211,5 +209,3 @@ public enum PTYError: Error {
     case openFailed
     case spawnFailed(Int32)
 }
-
-#endif // The PTY transport is Darwin-only (posix_spawn file actions + DispatchSourceProcess); the Linux agtermctl build (thin socket client) never touches it, so it is compiled out there.

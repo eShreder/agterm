@@ -428,11 +428,11 @@ agtermctl session rename "build" --target <session-id>   # -> tmux rename-window
 agtermctl session close --target <session-id>            # -> tmux kill-window
 ```
 
-## Address your own pane from inside a container hook
+## Address a mirrored session by its tmux pane id
 
-A process running inside a mirrored tmux window's leading pane (e.g. a container `exec`'d with tmux's
-`$TMUX_PANE` forwarded into its environment) can address its own session without knowing the agterm
-UUID, via the `tmux:` target sugar:
+A caller that has a tmux pane/window id handy (a `$TMUX_PANE` from a local tmux, or a pane/window id
+read back from `tree`) can address the mirrored session without knowing the agterm UUID, via the
+`tmux:` target sugar — it resolves to the leading pane of the mirrored window:
 
 ```bash
 agtermctl session status active --target "tmux:$TMUX_PANE"

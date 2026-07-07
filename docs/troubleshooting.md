@@ -121,7 +121,6 @@ Reload with **File ▸ Reload Config** or `agtermctl config reload`. The keybind
 - **`agtermctl: command not found`.** Install it from Help ▸ Install Command Line Tool… (it symlinks into `/usr/local/bin`). You can also call it by its full path inside the app bundle: `agterm.app/Contents/MacOS/agtermctl`.
 - **No desktop notifications.** macOS must have granted permission (System Settings ▸ Notifications ▸ agterm), and Settings ▸ General ▸ Notifications must be on. The unseen-count badge still tracks even when banners are off.
 - **Agent-status glyph does not update.** Install the hooks from Help ▸ Install Agent Status Hooks…, then start a fresh shell so the `source` line added to your shell rc takes effect. The hooks call `agtermctl session status`, so `agtermctl` must resolve first (see above).
-- **Inside a container: `agtermctl` cannot reach the socket, or a TUI's size is stale.** The socket must be forwarded/mounted in and `AGTERM_CONTROL_SOCKET` exported; a long-lived `docker exec` keeps the pty size from when it was created — re-enter to pick up the current size. Setup and both symptoms are covered in [container-control.md](container-control.md).
 
 ## Claude Code's question or permission prompt stops responding after switching apps
 
