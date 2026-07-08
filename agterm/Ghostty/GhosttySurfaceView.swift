@@ -563,11 +563,14 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         ownedConfigs = [config]
     }
 
-    /// Re-assert the session's watermark after a global config reload broadcast the shared config (no
-    /// background image) to this surface via `applyConfig`. No-op when the session has no watermark (so
-    /// a plain surface isn't needlessly rebuilt). Called from `GhosttyApp.reloadConfig`.
-    func reapplyWatermarkIfNeeded() {
-        guard session?.backgroundWatermark != nil else { return }
+    /// Re-assert the session's per-surface config (watermark and/or font zoom) after a global config
+    /// reload broadcast the shared config to this surface via `applyConfig`, wiping both. No-op when the
+    /// session carries neither (so a plain surface isn't needlessly rebuilt). Called from
+    /// `GhosttyApp.reloadConfig`; on the zoom-CLEARING reload paths `session.fontSize` was already nil'd
+    /// before the broadcast, so only a watermark re-applies there — the appearance-flip reload skips the
+    /// reset, and this is what carries each session's zoom across the flip.
+    func reapplySessionConfigIfNeeded() {
+        guard session?.backgroundWatermark != nil || session?.fontSize != nil else { return }
         applyWatermarkFromSession()
     }
 
@@ -683,6 +686,15 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
             configCStrings.append(valuePtr)
             envVars.append(ghostty_env_var_s(key: UnsafePointer(keyPtr), value: UnsafePointer(valuePtr)))
         }
+        // set the app color scheme to the current appearance BEFORE creating the surface: a new surface
+        // derives its initial theme from the app's conditional state (`ghostty_surface_new` reads it), so
+        // a dual `theme = light:,dark:` renders the correct side from the FIRST frame instead of defaulting
+        // to light and only correcting on a later reload. Read the APP-level side (`currentIsDark()`, i.e.
+        // `NSApp.effectiveAppearance`) — the single source the KVO observer also feeds, not this view's own
+        // `effectiveAppearance`. `set_color_scheme` records the state; it early-returns when unchanged.
+        let isDark = GhosttyApp.currentIsDark()
+        ghostty_app_set_color_scheme(app, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+
         // create the surface with `config.env_vars` pointing at the retained `envVars` storage. The
         // pointer is taken inside `withUnsafeMutableBufferPointer` AND `ghostty_surface_new` runs in
         // the same closure, so it's never used past the call (no escaping-pointer UB); ghostty copies
@@ -698,7 +710,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         }
         guard let surface else { return }
 
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // record the same scheme on the surface itself, so a later `update_config` re-resolves its side.
         ghostty_surface_set_color_scheme(surface, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
 
         if let screen = window?.screen ?? NSScreen.main,
@@ -865,10 +877,16 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         updateMetalLayerSize()
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
+    /// Record this surface's light/dark scheme from the authoritative `isDark` (the app-level side the
+    /// caller resolved from `NSApp.effectiveAppearance`), so the NEXT `update_config` re-resolves a dual
+    /// `theme = light:,dark:` to the matching side. libghostty derives the active side from the surface's
+    /// RECORDED conditional state at `update_config` time — not from the config file alone — so a surface
+    /// whose recorded state lagged (e.g. created before its window's appearance resolved) would re-derive
+    /// the WRONG side. Re-asserting it before each reload keeps the terminal in sync; `set_color_scheme`
+    /// early-returns when unchanged, so it is cheap. The APP-level scheme is set once by the caller
+    /// (`GhosttyApp.reloadConfig`), so this only touches the surface.
+    func syncColorScheme(isDark: Bool) {
         guard let surface else { return }
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         ghostty_surface_set_color_scheme(surface, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
     }
 

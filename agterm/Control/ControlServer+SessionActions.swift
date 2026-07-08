@@ -360,24 +360,51 @@ extension ControlServer: ControlActions {
 
     // MARK: - Theme
 
-    /// Set + persist a theme by name — the control half of the Settings picker / the `.themes` palette
-    /// commit (no live preview over the socket). A nil/empty name selects ghostty's built-in colors
-    /// ("default ghostty"), NOT the seeded `agterm` app default; any other name must be a bundled theme,
-    /// else an error (a typo silently doing nothing is worse than a fail). Returns the applied theme in
-    /// `result.theme` (nil = ghostty built-in). App-global: one `SettingsModel`, so no `--window` selector.
-    func setTheme(name: String?) -> ControlResponse {
-        let resolved = ThemeCatalog.resolvedName(name)
-        let catalog = ThemeCatalog(names: actions.availableThemes())
-        if let resolved, !catalog.contains(name: resolved) {
-            return ControlResponse(ok: false, error: "unknown theme: \(resolved)")
+    /// Set + persist a theme PER SLOT — the control half of the Settings pickers / the `.themes` palette
+    /// commit (no live preview over the socket). `args.name` (alias `args.light`; both is an error) sets the
+    /// light/single slot, keeping any dark slot; `args.dark` sets the dark slot and turns macOS-appearance
+    /// syncing ON (the stored value becomes ghostty's dual `light:,dark:`, light side seeded), and the
+    /// reserved value `none` (any case) clears it (syncing off). A nil/empty name selects ghostty's built-in colors
+    /// ("default ghostty"), NOT the seeded `agterm` app default; any other name must be a bundled theme, else
+    /// an error (a typo silently doing nothing is worse than a fail). Echoes the full post-change state
+    /// (`theme`/`sync`/`light`/`dark`). App-global: one `SettingsModel`, so no `--window` selector.
+    func setTheme(args: ControlArgs?) -> ControlResponse {
+        let name = ThemeCatalog.resolvedName(args?.name)
+        let light = ThemeCatalog.resolvedName(args?.light)
+        let dark = ThemeCatalog.resolvedName(args?.dark)
+        if name != nil && light != nil {
+            return ControlResponse(ok: false, error: "theme.set takes either a name or --light, not both")
         }
-        actions.setTheme(resolved)
-        return ControlResponse(ok: true, result: ControlResult(theme: resolved))
+        let lightSlot = name ?? light
+        let clearDark = dark?.lowercased() == "none"
+        let catalog = ThemeCatalog(names: actions.availableThemes())
+        for theme in [lightSlot, clearDark ? nil : dark].compactMap({ $0 })
+        where !catalog.contains(name: theme) {
+            return ControlResponse(ok: false, error: "unknown theme: \(theme)")
+        }
+        if clearDark {
+            actions.setDarkTheme(nil)
+            if lightSlot != nil { actions.setLightTheme(lightSlot) }
+        } else if let dark {
+            if let lightSlot {
+                actions.setSystemThemes(light: lightSlot, dark: dark)
+            } else {
+                actions.setDarkTheme(dark)
+            }
+        } else {
+            actions.setLightTheme(lightSlot) // nil = bare `theme set`: reset to ghostty built-in
+        }
+        return ControlResponse(ok: true, result: ControlResult(
+            theme: actions.currentTheme, sync: actions.followsSystemAppearance,
+            light: actions.currentLightTheme, dark: actions.currentDarkTheme))
     }
 
     func listThemes() -> ControlResponse {
         ControlResponse(ok: true, result: ControlResult(theme: actions.currentTheme,
-                                                        themes: actions.availableThemes()))
+                                                        themes: actions.availableThemes(),
+                                                        sync: actions.followsSystemAppearance,
+                                                        light: actions.currentLightTheme,
+                                                        dark: actions.currentDarkTheme))
     }
 
     /// Set the target session's agent-status indicator (control-native: no GUI/menu equivalent, like

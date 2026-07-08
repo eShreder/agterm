@@ -1471,8 +1471,8 @@ private final class MockControlActions: ControlActions {
         return nextNotifyResponse
     }
 
-    func setTheme(name: String?) -> ControlResponse {
-        calls.append(.themeSet(name))
+    func setTheme(args: ControlArgs?) -> ControlResponse {
+        calls.append(.themeSet(args?.name))
         return nextThemeSetResponse
     }
 

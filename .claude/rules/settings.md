@@ -15,7 +15,7 @@ paths:
 - Settings persist in agtermCore: `AppSettings` (Codable value type, optional fields,
   NO version field — optionality is the forward-compat) + `SettingsStore` (JSON at `<stateDir>/settings.json`,
   `AGTERM_STATE_DIR`-isolated, mirrors `PersistenceStore`).
-  Fields: `fontFamily`/`fontSize`/`theme` + `backgroundOpacity` (0...1) / `backgroundBlur` (CGS radius)
+  Fields: `fontFamily`/`fontSize`/`theme`/`darkTheme`/`followSystemAppearance` + `backgroundOpacity` (0...1) / `backgroundBlur` (CGS radius)
   + `notificationsEnabled` / `compactToolbar` / `notificationBadgeEnabled` / `attentionButtonEnabled`
   + the agent-status glyph colors `activeStatusColorHex`/`blockedStatusColorHex`/`completedStatusColorHex`
   (nil defaults: `notificationsEnabled`/`notificationBadgeEnabled` = on,
@@ -32,6 +32,7 @@ paths:
   `autoFollowAttention` an `AutoFollowAttention` raw string [nil = off/disabled], `autoFollowStayOnActive`
   [nil/false = off] the "don't leave a running session" opt-in; NOT ghostty keys, save-only + fanned out into
   every open window's `AppStore` via `SettingsModel.applyAutoFollow` → `AppStore.setAutoFollow`).
+  `theme`/`darkTheme`/`followSystemAppearance` are the macOS light/dark appearance-sync state: `theme` is the single/light-slot theme, `darkTheme` the dark slot, `followSystemAppearance` (nil = off) the toggle; when following, `ghosttyConfigLines()` emits ghostty's raw dual `theme = light:NAME,dark:NAME` conditional and libghostty resolves the side at runtime — `ghosttyConfigLines()` takes NO `isDark` arg (see the Theme picker rule; `ThemeResolution` is gone, the dual value is reduced to the active side for the sidebar selection colors by `ThemeName.resolved(from:isDark:)`).
   The three `*StatusColorHex` (`#RRGGBB`, nil = active `#DBD9E6` muted lavender-grey + system amber/green)
   color the sidebar agent-status glyph: `SettingsModel` passes the hex to `GhosttyApp.setAgentStatusColors`
   which resolves to `NSColor` (so `SettingsModel` stays AppKit-free, the `NSColor`↔hex helper is `NSColor+AgtermHex`),
@@ -221,7 +222,7 @@ paths:
   zoom) then clears it.
   `AppActions.reloadGhosttyConfig` (`@discardableResult -> Int`, returning the diagnostic count;
   File ▸ Reload Config + the palette + the overlay close + the `config.reload` control command) → `SettingsModel.reloadGhosttyConfig`
-  → `GhosttyApp.reloadConfig(surfaces:)` (`@discardableResult -> Int`, returning + caching `lastConfigDiagnosticsCount`)
+  → `GhosttyApp.reloadConfig(surfaces:isDark:)` (`@discardableResult -> Int`, returning + caching `lastConfigDiagnosticsCount`; `isDark` = the side to resolve the dual theme to, from `currentIsDark()` on the explicit path)
   + `resetSessionFontSizesAllWindows()` + `.agtermAppearanceChanged`; a non-zero count posts `NotificationManager.notifyConfigDiagnostics(count:)`
   from `SettingsModel.reloadGhosttyConfig` (mirroring `reloadKeymap`, so EVERY caller surfaces it — incl.
   a Key Mapping directory change via `setConfigDirectory`, which now reloads BOTH co-located files).

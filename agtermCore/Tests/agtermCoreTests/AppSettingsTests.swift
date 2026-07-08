@@ -40,6 +40,49 @@ struct AppSettingsTests {
         #expect(lines == ["theme = Alabaster", "mouse-scroll-multiplier = 3", "right-click-action = paste"])
     }
 
+    @Test func followingEmitsRawDual() {
+        // following the appearance emits ghostty's dual conditional RAW (written unquoted); libghostty
+        // resolves the active side itself on a color-scheme change, so agterm never picks a side.
+        let settings = AppSettings(theme: "Builtin Light", darkTheme: "Nord", followSystemAppearance: true)
+        #expect(settings.ghosttyConfigLines().contains("theme = light:Builtin Light,dark:Nord"))
+    }
+
+    @Test func notFollowingEmitsSingleTheme() {
+        // a plain theme, or a set dark slot with following OFF, emits one theme (no dual).
+        #expect(AppSettings(theme: "Alabaster").ghosttyConfigLines().contains("theme = Alabaster"))
+        let darkKept = AppSettings(theme: "Alabaster", darkTheme: "Nord", followSystemAppearance: false)
+        #expect(darkKept.ghosttyConfigLines().contains("theme = Alabaster"))
+        #expect(!darkKept.ghosttyConfigLines().contains { $0.hasPrefix("theme = light:") })
+    }
+
+    @Test func activeThemeTracksAppearanceWhenFollowing() {
+        // the palette badge/selection resolver: the dark slot in dark mode (else `theme`), `theme` in
+        // light mode. Not following → the appearance is ignored.
+        let synced = AppSettings(theme: "Builtin Light", darkTheme: "Nord", followSystemAppearance: true)
+        #expect(synced.activeTheme(isDark: true) == "Nord")
+        #expect(synced.activeTheme(isDark: false) == "Builtin Light")
+        let single = AppSettings(theme: "agterm")
+        #expect(single.activeTheme(isDark: true) == "agterm")
+        #expect(single.activeTheme(isDark: false) == "agterm")
+        #expect(AppSettings().activeTheme(isDark: true) == nil)
+    }
+
+    @Test func followingWithoutDarkSlotEmitsSingle() {
+        // following on but the dark slot unset (an inconsistent hand-edit): fall back to the single
+        // theme rather than an ill-formed `light:X,dark:`.
+        let settings = AppSettings(theme: "Alabaster", darkTheme: nil, followSystemAppearance: true)
+        #expect(settings.ghosttyConfigLines().contains("theme = Alabaster"))
+        #expect(!settings.ghosttyConfigLines().contains { $0.hasPrefix("theme = light:") })
+    }
+
+    @Test func newThemeFieldsRoundTrip() throws {
+        let original = AppSettings(theme: "Builtin Light", darkTheme: "agterm", followSystemAppearance: true)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(original))
+        #expect(decoded == original)
+        #expect(decoded.darkTheme == "agterm")
+        #expect(decoded.followSystemAppearance == true)
+    }
+
     @Test func fractionalFontSizeKeepsDecimal() {
         let lines = AppSettings(fontSize: 13.5).ghosttyConfigLines()
         #expect(lines == ["font-size = 13.5", "mouse-scroll-multiplier = 3", "right-click-action = paste"])

@@ -29,7 +29,7 @@ public protocol ControlActions {
     func reloadKeymap() -> ControlResponse
     func reloadGhosttyConfig() -> ControlResponse
     func sendNotification(_ target: String?, window: String?, title: String?, body: String) -> ControlResponse
-    func setTheme(name: String?) -> ControlResponse
+    func setTheme(args: ControlArgs?) -> ControlResponse
     func listThemes() -> ControlResponse
     func setSidebarVisibility(_ mode: ControlToggleMode) -> ControlResponse
     func setSidebarViewMode(_ mode: ControlSidebarViewMode) -> ControlResponse
@@ -143,6 +143,9 @@ public struct ControlDispatcher {
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
                 .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen:
             return await dispatchWindowCommand(request)
+        case .debugAppearance:
+            // UI-test-only seam handled app-side in `ControlServer` (needs AppKit + `ContentView.isUITestLaunch`).
+            return nil
         }
     }
 
@@ -373,7 +376,7 @@ public struct ControlDispatcher {
             return actions.sendNotification(request.target, window: request.args?.window,
                                             title: request.args?.title, body: body)
         case .themeSet:
-            return actions.setTheme(name: request.args?.name)
+            return actions.setTheme(args: request.args)
         case .themeList:
             return actions.listThemes()
         case .sidebar:

@@ -129,7 +129,9 @@ final class GhosttyApp {
         }
         app = createdApp
         config = cfg
-        resolveThemeColors(from: cfg, inputs: configInputs)
+        // boot-time: no surface exists yet, so the NSApp read is the only side source (and nothing has
+        // rendered, so it cannot disagree with a surface).
+        resolveThemeColors(from: cfg, inputs: configInputs, isDark: Self.currentIsDark())
         // demand-driven: no poll timer. ticks come from libghostty wakeups (coalesced in
         // GhosttyCallbacks.wakeup) and surfaces draw on GHOSTTY_ACTION_RENDER, matching Ghostty.app/conterm
         // — an idle terminal does no work, where a 120Hz poll ticked continuously.
@@ -271,7 +273,7 @@ final class GhosttyApp {
     /// risking a use-after-free. Returns the rebuilt config's diagnostic count (0 = clean) so a
     /// Reload Config can warn the user about a malformed `ghostty.conf`.
     @discardableResult
-    func reloadConfig(surfaces: [GhosttySurfaceView]) -> Int {
+    func reloadConfig(surfaces: [GhosttySurfaceView], isDark: Bool) -> Int {
         // no app (called before `ghostty_app_new` succeeded) or `ghostty_config_new` allocation failure:
         // nothing was re-read, so report the last known count. The property name is "from the most recent
         // loadConfig", and both paths are effectively unreachable in practice (the app is always booted
@@ -279,43 +281,78 @@ final class GhosttyApp {
         guard let app else { return lastConfigDiagnosticsCount }
         let inputs = Self.resolveConfigInputs()
         guard let newConfig = loadConfig(inputs) else { return lastConfigDiagnosticsCount }
+        // Re-assert the app + each surface's light/dark scheme from the authoritative `isDark` (the
+        // KVO-delivered side, else `currentIsDark()`) BEFORE feeding the config: libghostty re-resolves a
+        // dual `theme = light:,dark:` to the side matching the recorded conditional state, so a stale side
+        // would re-derive the wrong theme. Setting the APP scheme here (not only per surface) makes a
+        // ZERO-surface reload chrome-correct — the CONFIG_CHANGE clone below resolves to `isDark` even with
+        // no surfaces, so a dark launch re-sides the sidebar/titlebar before any surface exists. Cheap
+        // (each set no-ops when unchanged); the config re-feed below is what actually re-renders.
+        ghostty_app_set_color_scheme(app, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        for surface in surfaces { surface.syncColorScheme(isDark: isDark) }
         ghostty_app_update_config(app, newConfig)
+        // ghostty replies to update_config with a synchronous app-target CONFIG_CHANGE carrying the
+        // config it APPLIED — the dual `theme = light:,dark:` resolved to the current appearance side.
+        // Read the chrome colors from THAT clone below: newConfig itself is always finalized with the
+        // default (light) conditional state, so reading it directly while following in dark mode would
+        // tint the sidebar/titlebar with the LIGHT slot while the terminal renders the dark one. Falls
+        // back to newConfig when nothing was stashed (no conditional in play).
+        let derivedConfig = callbacks.takeDerivedAppConfig()
         for surface in surfaces { surface.applyConfig(newConfig) }
         config = newConfig
         // refresh the chrome colors from the NEW config BEFORE the watermark re-assert below: a default-tinted
         // `.text` watermark re-renders its PNG reading `terminalForegroundColor`, so the foreground must already
         // reflect the new theme — otherwise the text watermark's color lags one reload behind a theme change.
-        resolveThemeColors(from: newConfig, inputs: inputs)
-        // the broadcast above pushes the shared config (no background image) to every surface, wiping any
-        // per-surface watermark — so re-assert each watermarked surface's overlay afterwards. No-op for the
-        // surfaces without one. (Mirrors how per-session font zoom is reconciled, but re-applied not reset.)
-        for surface in surfaces { surface.reapplyWatermarkIfNeeded() }
+        // the selection colors re-side from the authoritative `isDark` passed in (the side the app +
+        // surfaces were just set to), NOT re-read from any view.
+        resolveThemeColors(from: derivedConfig ?? newConfig, inputs: inputs, isDark: isDark)
+        if let derivedConfig { ghostty_config_free(derivedConfig) }
+        // the broadcast above pushes the shared config (no background image, default font size) to every
+        // surface, wiping any per-surface watermark and zoom — so re-assert each affected surface's
+        // overlay afterwards. No-op for the surfaces without either; on the zoom-clearing reload paths
+        // the per-session fontSize was already nil'd, so only watermarks re-apply there.
+        for surface in surfaces { surface.reapplySessionConfigIfNeeded() }
         return lastConfigDiagnosticsCount
     }
+
+    /// The inputs of the most recent config load, cached so `refreshSelectionColors` can re-resolve the
+    /// selection colors after a live color change without a full config reload.
+    private var lastConfigInputs: ConfigInputs?
 
     /// Re-read the chrome colors (background, foreground, selection background/foreground) from a
     /// resolved config. Called at init and on every settings reload. `background`/`foreground` come
     /// from the resolved config; the selection colors are resolved separately (see below) because
     /// `ghostty_config_get` does not expose the optional `selection-*` keys.
-    private func resolveThemeColors(from config: ghostty_config_t, inputs: ConfigInputs) {
+    private func resolveThemeColors(from config: ghostty_config_t, inputs: ConfigInputs, isDark: Bool) {
+        lastConfigInputs = inputs
         terminalBackgroundColor = Self.color(from: config, key: "background")
         terminalForegroundColor = Self.color(from: config, key: "foreground")
+        refreshSelectionColors(isDark: isDark)
+    }
+
+    /// Re-resolve the selection chrome colors for the given appearance side. Used by the full config
+    /// load AND by the appearance-flip reload (which re-resolves the theme's colors), so the
+    /// selected-row pill follows a light/dark theme flip. `isDark` is explicit at every call site (the
+    /// reload threads the KVO-delivered side) — no defaulted appearance read a future caller could
+    /// silently pick up. No-op until a config has loaded.
+    func refreshSelectionColors(isDark: Bool) {
+        guard let inputs = lastConfigInputs else { return }
         let (selectionBackground, selectionForeground) = Self.resolveSelectionColors(
             ghosttyConfigPath: inputs.scopedURL.path, inheritGlobalConfig: inputs.inheritGlobalConfig,
-            isDark: Self.currentAppearanceIsDark())
+            isDark: isDark)
         terminalSelectionBackgroundColor = selectionBackground
         terminalSelectionForegroundColor = selectionForeground
             ?? selectionBackground.map(Self.contrastingText(for:))
     }
 
-    /// Whether the active appearance is dark, for the `theme = light:…,dark:…` form.
-    /// `resolveThemeColors` runs from `init` before `NSApp` exists, so fall back to
-    /// the system setting instead of force-unwrapping nil `NSApp`.
-    private static func currentAppearanceIsDark() -> Bool {
-        if let appearance = NSApp?.effectiveAppearance {
-            return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        }
-        return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    /// Whether the app is currently in the dark appearance. `NSApp` is an implicitly-unwrapped global
+    /// that is still nil during the very early `GhosttyApp.shared` init (it boots from `SettingsModel.init`
+    /// before AppKit finishes wiring `NSApp`), so chain through it safely; that early window no longer
+    /// resolves a theme (the config emits the raw dual value and ghostty picks the side from the color
+    /// scheme set at surface creation), so a light default there is harmless.
+    static func currentIsDark() -> Bool {
+        guard let appearance = NSApp?.effectiveAppearance else { return false }
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
     /// The selection colors can't be read back through `ghostty_config_get` (it doesn't expose the
@@ -329,7 +366,8 @@ final class GhosttyApp {
     /// an include is missed and the sidebar pill falls back. A known edge case (it pre-dates the
     /// agterm-scoped `ghostty.conf`). The user's global `~/.config/ghostty/config` is a source ONLY when
     /// `inheritGlobalConfig` is on, matching `loadConfig`'s gate.
-    private static func resolveSelectionColors(ghosttyConfigPath: String, inheritGlobalConfig: Bool, isDark: Bool) -> (NSColor?, NSColor?) {
+    private static func resolveSelectionColors(ghosttyConfigPath: String, inheritGlobalConfig: Bool,
+                                               isDark: Bool) -> (NSColor?, NSColor?) {
         var sources: [String] = []
         if let defaults = Bundle.main.url(forResource: "ghostty-defaults", withExtension: "conf") {
             sources.append(defaults.path)
@@ -354,7 +392,9 @@ final class GhosttyApp {
                 }
             }
         }
-        // the theme file fills any selection color not set explicitly above.
+        // the theme file fills any selection color not set explicitly above. Our own settings conf now
+        // carries the raw dual `theme = light:,dark:` value (ghostty resolves the terminal side itself),
+        // so pick the side matching the current appearance here for the pill.
         if selBg == nil || selFg == nil, let themeName, !themeName.isEmpty,
            let themesDir = Bundle.main.url(forResource: "ghostty", withExtension: nil)?
                .appendingPathComponent("themes", isDirectory: true) {
@@ -544,6 +584,16 @@ extension Notification.Name {
     /// sidebar) re-read the new `GhosttyApp.terminalBackgroundColor` immediately instead of waiting
     /// for the window to re-key.
     static let agtermAppearanceChanged = Notification.Name("agterm.appearanceChanged")
+
+    /// Posted by `SystemAppearanceObserver` (an app-level KVO observer on `NSApplication.effectiveAppearance`)
+    /// when the macOS light/dark appearance changes, and once at launch, carrying the resolved `isDark` in
+    /// userInfo. `SettingsModel` re-resolves the active side of a `theme = light:,dark:` pair and
+    /// rewrites+reloads the config — this pinned libghostty doesn't switch the dual conditional at runtime,
+    /// so agterm drives the swap itself. KVO delivers the settled value across sleep/wake, unlike the old
+    /// per-view `viewDidChangeEffectiveAppearance` hook that wedged. Also posted by the `debug.appearance`
+    /// UI-test seam. Distinct from `agtermAppearanceChanged` (the settings→chrome direction); this is the
+    /// system→settings direction.
+    static let agtermSystemAppearanceChanged = Notification.Name("agterm.systemAppearanceChanged")
 
     /// Posted when a window becomes frontmost (the active-window change is async, via the window's
     /// didBecomeKey), so the control server can refresh its cached `window.list` — whose `active` flag

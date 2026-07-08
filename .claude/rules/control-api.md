@@ -204,6 +204,20 @@ paths:
   - `theme.set`/`theme.list` (see the Theme picker section)
   - `restore.clear` (see the Settings section)
 
+  One extra `Command` case is deliberately NOT part of the catalog: `debug.appearance` (`light`|`dark`
+  via `args.name`) is a UI-TEST-ONLY seam that sets `NSApp.appearance` so an XCUITest can simulate a
+  macOS light/dark flip (macOS XCUITest has no API for it); the arm ALSO posts
+  `.agtermSystemAppearanceChanged` directly so the flip pipeline runs deterministically without depending
+  on whether KVO fires on an explicit `NSApp.appearance` set (production follows the appearance via an
+  app-level KVO observer on `NSApplication.effectiveAppearance` — see the theme-picker/libghostty rules).
+  The `ControlServer` arm refuses it outside an XCUITest launch (`ContentView.isUITestLaunch`), it gets
+  NO `agtermctl` subcommand, and it stays out of the agent skill — a documented keep-in-sync EXEMPTION
+  (test scaffolding, not a control surface).
+  Setting echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side
+  the last config feed applied (`SettingsModel.lastAppliedIsDark`), which the test polls to prove the
+  flip actually drove the reload.
+  `AppearanceFlipUITests` is its only consumer; the public command count stays 53.
+
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
   blocks on a modal).
   `session.move` is MODE-BEARING with THREE exclusive placement intents:
@@ -702,22 +716,29 @@ paths:
   (2) the `.sidebar` dispatch arm (`setSidebar`) in `ControlServer`, (3) the `sidebar` subcommand in
   `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSidebarShowHideToggle` (sidebar
   hide removes the `session-row`s from the AX tree) in `ControlSidebarStatusUITests`.
-  `theme.set` sets + persists a theme by name (`args.name`; nil/empty = ghostty's built-in / "default
-  ghostty", NOT the seeded `agterm` app default — see the Theme picker section) — the control half of
-  the Settings picker / the `.themes` palette commit, the SAME `SettingsModel.setTheme` persist+apply
-  path (NO live preview over the socket — preview is interactive-only).
+  `theme.set` sets + persists a theme (see the Theme picker section) PER SLOT, mirroring the two Settings pickers over the shared `SettingsModel.setLightTheme`/`setDarkTheme`/`setSystemThemes`.
+  `args.name` (alias `args.light`; both together is an error) sets the light/single `theme` slot,
+  KEEPING the `darkTheme` slot if one is set (they are separate fields, no recompose);
+  nil/empty = ghostty's built-in / "default ghostty" (NOT the seeded `agterm` app default),
+  and a bare `theme set` clears BOTH slots + turns syncing off.
+  `args.dark` sets the `darkTheme` slot alone and turns appearance syncing ON (`followSystemAppearance`,
+  the light side seeds from the current theme, else `Builtin Light`);
+  the reserved value `none` clears the dark slot (syncing off, the light side survives as the plain theme).
+  The `.themes` palette commit maps to the CURRENT appearance's slot (NO live preview over the socket — preview is interactive-only).
   An unknown name (not in `SettingsCatalog.themeNames()`) is an `unknown theme: X` error (a typo silently
-  doing nothing is worse than a fail); the applied name echoes in `result.theme` (nil = ghostty built-in).
-  `theme.list` returns `result.themes` = the bundled names + `result.theme` = the current one (nil =
-  ghostty built-in; absent on a fresh install means the seeded `agterm` is current);
+  doing nothing is worse than a fail); the response always echoes the full post-change state
+  (`result.theme`/`sync`/`light`/`dark`).
+  `theme.list` returns `result.themes` = the bundled names + `result.theme` = the plain current one (nil =
+  ghostty built-in; absent on a fresh install means the seeded `agterm` is current) + `result.sync`/`light`/`dark`;
+  while syncing `result.theme` is ABSENT — the state rides the three sync fields.
   `agtermctl theme list` prints one name per line with a leading "default ghostty" row,
-  the current marked `* `, and `theme.set` prints `ok` (non-create mutation).
+  the active marked `* ` (both sides + a header while syncing), and `theme.set` prints `ok` (non-create mutation).
   App-global like `keymap.reload` (one `SettingsModel`), so NO `--window` selector.
   Four-point keep-in-sync audit: (1) `case themeSet = "theme.set"` + `case themeList = "theme.list"`
   in `ControlProtocol.swift` (reuse `ControlArgs.name`; add `ControlResult.theme`/`themes`),
   (2) the `.themeSet` (`setTheme`, with name validation) + `.themeList` dispatch arms in `ControlServer`,
-  (3) the `theme set [name]` / `theme list` subcommands in `agtermctlKit` (+ `SocketClient.formatThemes`),
-  (4) round-trip in `ControlProtocolTests` + the e2e `testThemeListAndSet` in `ControlAPIUITests`.
+  (3) the `theme set [name] [--light] [--dark]` / `theme list` subcommands in `agtermctlKit` (+ `SocketClient.formatThemes`),
+  (4) round-trip in `ControlProtocolTests` + the e2e `testThemeListAndSet` in `ControlAPIUITests` and `testThemeSyncWithSystemAppearance` in `ControlAPIThemeUITests`.
   See the Theme picker section for the GUI/preview half.
   `session.flag` (target = session) flags/unflags a session for the flagged working-set view — `args.mode`
   is `on`|`off`|`toggle`|`clear` (`clear` IGNORES the target and unflags every session in the resolved

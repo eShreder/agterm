@@ -374,7 +374,42 @@ final class ControlServer {
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
                 .windowFullscreen, .restoreClear:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
+        case .debugAppearance:
+            return setDebugAppearance(args: request.args)
         }
+    }
+
+    /// UI-TEST-ONLY seam: force the app-level appearance so an XCUITest can simulate a macOS light/dark
+    /// flip deterministically (macOS XCUITest has no API to change the system appearance). Setting
+    /// `NSApp.appearance` changes `NSApp.effectiveAppearance`; this arm ALSO posts
+    /// `.agtermSystemAppearanceChanged` directly, so the REAL flip path (scheme sync → debounced
+    /// zoom-preserving reload) is exercised end to end without depending on whether KVO fires on an
+    /// explicit set (production relies on the KVO observer firing on a genuine system flip). Refused
+    /// outside an XCUITest launch, and deliberately EXEMPT from the four-point keep-in-sync (no agtermctl
+    /// subcommand, absent from the catalog/skill) — test scaffolding, not a control surface. Setting
+    /// echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side the
+    /// last config feed applied (`SettingsModel.lastAppliedIsDark`), which a test polls to assert the
+    /// flip actually drove the reload — a suppressed flip leaves it on the old side.
+    private func setDebugAppearance(args: ControlArgs?) -> ControlResponse {
+        guard ContentView.isUITestLaunch else {
+            return ControlResponse(ok: false, error: "debug.appearance is a UI-test-only seam")
+        }
+        guard args?.name != nil else {
+            return ControlResponse(ok: true, result: ControlResult(
+                text: settingsModel.lastAppliedIsDark ? "dark" : "light"))
+        }
+        guard let side = trimmed(args?.name), side == "light" || side == "dark" else {
+            return ControlResponse(ok: false, error: "debug.appearance requires light|dark")
+        }
+        // take the validated `side` directly — do NOT re-read `currentIsDark()`, whose
+        // `effectiveAppearance` may not have settled synchronously right after the set (the same
+        // "take the delivered value, never re-read" rule the production `SystemAppearanceObserver` follows).
+        let isDark = side == "dark"
+        NSApp.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        // drive the flip pipeline directly (a duplicate KVO post, if any, is same-side-suppressed).
+        NotificationCenter.default.post(name: .agtermSystemAppearanceChanged, object: nil,
+                                        userInfo: ["isDark": isDark])
+        return ControlResponse(ok: true, result: ControlResult(text: isDark ? "dark" : "light"))
     }
 
     /// Clear every open session's saved foreground command (the restore-running-command capture) and

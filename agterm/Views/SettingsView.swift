@@ -212,11 +212,27 @@ private struct AppearanceSettingsView: View {
                 }
                 .accessibilityIdentifier("settings-font-size")
 
-                Picker("Theme", selection: theme) {
-                    Text("default ghostty").tag(String?.none)
+                // the theme for the CURRENT appearance. While following, this edits the on-screen side
+                // (dark in dark mode, light in light mode); the "default ghostty" row is offered only
+                // when NOT following, since a dual conditional needs two named themes.
+                Picker("Theme", selection: themeForCurrentAppearance) {
+                    if !following { Text("default ghostty").tag(String?.none) }
                     ForEach(themes, id: \.self) { Text($0).tag(String?.some($0)) }
                 }
                 .accessibilityIdentifier("settings-theme")
+
+                Toggle("Follow system appearance", isOn: followSystemAppearance)
+                    .accessibilityIdentifier("settings-follow-appearance")
+
+                // revealed only when following: the theme for the OTHER appearance. ghostty resolves the
+                // active side at runtime, so no config rewrite happens on a light/dark flip.
+                if following {
+                    Picker(GhosttyApp.currentIsDark() ? "Light theme" : "Dark theme", selection: alternateTheme) {
+                        ForEach(themes, id: \.self) { Text($0).tag(String?.some($0)) }
+                    }
+                    .accessibilityIdentifier("settings-theme-dark")
+                    SettingHint("Used when macOS is in \(GhosttyApp.currentIsDark() ? "light" : "dark") mode.")
+                }
             }
 
             Section("Window") {
@@ -278,8 +294,28 @@ private struct AppearanceSettingsView: View {
         Binding(get: { model.settings.fontSize ?? 13 }, set: { model.setFontSize($0) })
     }
 
-    private var theme: Binding<String?> {
-        Binding(get: { model.settings.theme }, set: { model.setTheme($0) })
+    /// Whether the terminal follows the macOS appearance — reveals the alternate picker.
+    private var following: Bool { model.settings.followSystemAppearance == true }
+
+    /// Picker 1: the theme for the CURRENT appearance (dark slot while following in dark mode, else
+    /// `theme`). Drives `SettingsModel.setThemeForCurrentAppearance`.
+    private var themeForCurrentAppearance: Binding<String?> {
+        Binding(get: { model.settings.activeTheme(isDark: GhosttyApp.currentIsDark()) },
+                set: { model.setThemeForCurrentAppearance($0) })
+    }
+
+    /// Picker 2 (shown only while following): the OTHER appearance's theme — the light slot in dark mode,
+    /// the dark slot in light mode. Drives `SettingsModel.setAlternateTheme`.
+    private var alternateTheme: Binding<String?> {
+        Binding(get: { GhosttyApp.currentIsDark() ? model.settings.theme : model.settings.darkTheme },
+                set: { model.setAlternateTheme($0) })
+    }
+
+    /// The "Follow system appearance" toggle — seeds/collapses the two slots via
+    /// `SettingsModel.setFollowSystemAppearance`.
+    private var followSystemAppearance: Binding<Bool> {
+        Binding(get: { model.settings.followSystemAppearance == true },
+                set: { model.setFollowSystemAppearance($0) })
     }
 
     /// 1.0 maps to nil (the opaque default) so settings.json stays minimal and the "unset = default"
