@@ -130,6 +130,19 @@ The app must build, `swift test` must stay green, and `make lint` must pass afte
   Cleanup must NEVER switch the main checkout's branch (the user may be working there in another window),
   and `gh pr merge --delete-branch` run FROM the worktree switches it, so merge / branch-delete from the
   main checkout, not the worktree.
+  **A squash (or rebase) merge makes `ExitWorktree` `remove` (and a manual `git worktree remove`) REFUSE
+  with "N commits will be discarded permanently"** — git can't recognize the worktree branch as merged,
+  because the squash rewrote its commits into one new commit on `master`.
+  This is the SAME snag every worktree cleanup after a squash merge; it is expected, not a failure.
+  Once you have VERIFIED the squash landed on `origin/master` (its tip is the PR's merge commit — check
+  with `gh pr view <n> --json state,mergeCommit` + `git fetch origin master`), re-invoke `ExitWorktree`
+  with `discard_changes: true`: the branch work is safe inside the squash, so discarding the loose commits
+  loses nothing.
+  Second gotcha: `ExitWorktree`'s message and its `remove` reference the ORIGINAL branch name
+  (`worktree-<name>`) even after you renamed the branch to `<name>`, so the renamed local `<name>` branch
+  SURVIVES the worktree removal and must be deleted separately with `git branch -D <name>` from the main
+  checkout (and GitHub's auto-delete-head-branch may already have removed the remote one — confirm with
+  `git ls-remote --heads origin <name>` before any `git push origin --delete`).
 - **Working in a git WORKTREE: SYMLINK the prebuilt artifacts, don't re-run setup.** A fresh `git worktree`
   does NOT contain the gitignored `GhosttyKit.xcframework`, `agterm/Resources/ghostty`,
   or `agterm/Resources/terminfo` (they're build outputs, never committed).
