@@ -6,9 +6,10 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 ## Connection and output
 
 - **Socket resolution** (when `--socket` is omitted): `AGTERM_SOCKET` is the path the running app
-  bound; agtermctl resolves the same rendezvous: `<AGTERM_STATE_DIR>/agterm.sock`, else
-  `<$HOME>/Library/Application Support/agterm/agterm.sock`. Passing `--socket "$AGTERM_SOCKET"` is the
-  safe explicit form.
+  bound; agtermctl resolves the same rendezvous, in precedence order: `AGTERM_CONTROL_SOCKET` (an
+  explicit override), else `<AGTERM_STATE_DIR>/agterm.sock`,
+  else `<$HOME>/Library/Application Support/agterm/agterm.sock`. Passing `--socket "$AGTERM_SOCKET"` is
+  the safe explicit form and always wins over the environment.
 - **`--json`**: prints the raw response object. Without it, ordinary mutations print `ok`, batch
   close/move prints the affected session count, and `tree`/`window list` print a human listing. Use
   `--json` when you need to read ids or values back.
@@ -30,6 +31,17 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   `text`, `background`, `status`, `copy`, …) that must act on the session you run in — otherwise it hits
   whatever the user has selected. `overlay open` opens in the background without switching the user
   (both full and floating); pass `--follow` to additionally SELECT the target, switching the user to it.
+- `--target tmux:%<pane>` / `tmux:@<window>` — sugar for a session mirrored from a native tmux attach
+  (see the tmux section). It resolves against every LIVE tmux connection's current window layout, then
+  falls through the normal target machinery, so it works anywhere a session `--target` is accepted —
+  it is addressing sugar, not a new command (the catalog stays at 64). Only each mirrored window's
+  LEADING pane is addressable this way (a split window's other panes are not mirrored — see the tmux
+  section's v1 limitation), so `%<pane>` and `@<window>` of the same window resolve to the same session.
+  A miss (stale/unmirrored id) returns the same shape as any other resolution miss:
+  `no such session: tmux:%999`. The recipe: when you have a tmux pane id in hand (a `$TMUX_PANE` from a
+  local tmux, or a pane/window id read back from `tree`),
+  `agtermctl session status active --target "tmux:$TMUX_PANE"` addresses the mirrored session without
+  knowing the agterm UUID.
 - `--window <id|prefix|active>` (on session/workspace/tree/font/notify commands) picks which window's
   tree to act on; default is the frontmost. With `--window` set, that window must be open. Without it,
   an id/prefix session target is matched across all open windows.
@@ -73,7 +85,9 @@ The surface `id` is the address for `surface zoom`; hidden-but-alive split/scrat
 so a script can zoom them without changing split/scratch visibility first. Caveat: `active`/`visible`
 derive from the session's own flags, not from zoom — and `visible` reads false for a pane behind a
 FLOATING overlay even though it is visually on screen; address by `id`/`kind`, and read the zoom state
-from the top-level `zoomedSurface`. Workspace nodes carry
+from the top-level `zoomedSurface`. A tmux-backed session also carries `tmuxWindow`/`tmuxPane` (the
+mirrored tmux window id, e.g. `@7`, and its leading pane id, e.g. `%12` — the read side of `tmux:`
+addressing; both omitted for a local, non-tmux-backed session). Workspace nodes carry
 `id`, `name`, `active`, `sessions`, and `focused` (whether the sidebar
 tree is collapsed to this workspace — the read side of `workspace focus`, distinct from `active` the
 SELECTED workspace; omitted unless this is the focused one, and absent entirely when nothing is focused).
@@ -169,7 +183,8 @@ All ten are read-only projections of GUI state.
   Repeat `--target` for a batch move with the workspace and after/before placement forms; the sessions
   move as one ordered block after all sources are removed. Repeated `--target` is rejected with
   `--to up|down|top|bottom` because relative reorder is per-session. Batch moves return `result.affected`,
-  counting only sessions whose position/workspace changed.
+  counting only sessions whose position/workspace changed. A relocate ACROSS a tmux-mirror boundary
+  (a tmux-backed session out, or any session into a mirror) is refused with an error, not a silent no-op.
 - `session type <text> [--stdin] [--select] [--pane left|right|scratch] [--target] [--window W]` — inject text
   as real keystrokes (printable runs plus Return for each newline; no bracketed-paste markers).
   `--stdin` reads the text from stdin instead of the argument. `--select` selects (and realizes) a
@@ -624,6 +639,46 @@ Which programs are NOT re-run is controlled by `restore-denylist.conf` in the co
 command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain
 user-edited file read at launch — there is no control command for it.
 
+## tmux
+
+Native `tmux -CC` control-mode sessions. A remote (or local) tmux session is attached over `ssh … tmux
+-CC new -A -s <name>`; each tmux WINDOW becomes a native agterm session in a `tmux: <host>/<session>`
+workspace. The windows render in ordinary agterm terminals — each is a normal local shell running
+`agtermctl tmux-pipe`, relaying bytes to/from tmux over a unix socket — so there is NO libghostty patch
+and per-window search / notifications / titles work like any session. v1 limitation: no splits inside a
+tmux window (a split window shows only its leading pane).
+
+- `agtermctl tmux attach <host> [--session NAME] [--workspace NAME]` — ssh to `<host>` and attach-or-create
+  the tmux session (default `main`). Mirrors its windows; prints the connection id (`result.id`, the
+  mirror-workspace uuid) so a script can detach/kill later without scraping `tmux list`. A repeat attach
+  to a host+session already mirrored just focuses that connection (and prints the SAME id). `<host>` is
+  any ssh target (`user@host`, or `localhost`).
+- `agtermctl tmux list` — the live connections, one per line as `<id>  <host>/<session>  [win1, win2]`
+  (`host/session` is the connection identity, so two connections to one host stay distinguishable; the
+  JSON node carries `id`/`host`/`session`/`windows`). `<id>` is the tmux workspace uuid, used to address
+  `detach`/`kill`.
+- `agtermctl tmux detach [id]` — soft detach: sends `detach-client`, tmux keeps running server-side, the
+  local workspace is removed. The id accepts a case-insensitive full uuid or a unique prefix (git-style,
+  like every other target; ≥2 prefix hits error as ambiguous). Omit `id` ONLY when a single connection is
+  live; with more than one you must name the id (a bare command errors rather than detaching an arbitrary
+  one). Echoes the matched connection id in `result.id` (under `--json`; useful with the no-id form).
+  Reattach later with `tmux attach`.
+- `agtermctl tmux kill [id]` — hard remote `kill-session` (terminates every window), then removes the
+  local workspace. Same id addressing (and `result.id` echo) as `detach`. The remote kill is
+  BEST-EFFORT: the command returns once `kill-session` is handed to the transport, and the local mirror
+  is torn down regardless (after a ~2 s fallback) — if the ssh connection is dead or hung, the remote
+  tmux session may survive. When the remote teardown matters, verify with a fresh `tmux attach` (an
+  `-A` attach recreates it empty) or ssh in and check `tmux ls`.
+
+Backend-aware `session.*` on a tmux-backed session (`tmuxBinding` present): `session close` →
+`kill-window` and `session rename` → `rename-window`, so lifecycle round-trips to tmux. Opening a new
+tmux window is GUI-only (New Session ⌘T on a tmux session); control `session new` creates a local
+session. `session select`/`go`/`type`/`copy`/`text`/`search` stay local (UI/IO).
+`session split`/`scratch`/`overlay` on a tmux-backed session are LOCAL tools: the second pane, scratch
+shell, or overlay runs on the LOCAL machine (it is not a tmux pane and does not survive server-side) and
+is destroyed with the mirror on detach/kill — don't leave work you care about in one.
+On an ssh drop or `%exit`, the connection tears its workspace down; reattach is manual (`tmux attach`).
+
 ## Errors you may see
 
 `notFound` / `ambiguous` (target resolution), `no such session`, `invalid split mode` /
@@ -631,10 +686,14 @@ user-edited file read at launch — there is no control command for it.
 `no overlay` / `still running` / `no result` (overlay), `invalid flag mode` (session flag),
 `invalid fit` / `invalid position` / `invalid opacity` / `invalid color` / `text too long` /
 `unsupported image (PNG or JPEG only)` / `no such image file` / `image path must not contain control characters` / `invalid background mode` (session background),
+`cannot add a session to a tmux mirror workspace` (session new targeting a tmux mirror),
+`cannot move a session into or out of a tmux mirror` (session move across a mirror boundary),
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
-`no open window` (quick/sidebar), `quick terminal not open` / `quick terminal not realized` (quick type) /
+`no open window` (quick/sidebar/`tmux attach`), `quick terminal not open` / `quick terminal not realized` (quick type) /
 `failed to read surface buffer` (quick text / session text), `window not open`
-(resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
+(resize/move/`--window`),
+`tmux.attach requires a host` / `invalid ssh host` (empty or `-`-prefixed host) / `tmux attach failed to spawn ssh` (the child failed to launch), `tmux connection not found` / `multiple tmux connections; specify an id` (tmux detach/kill),
+`unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
 `invalid color (expected #rrggbb)` (session status --color),
 `--pane must be left, right, or scratch` (the `--pane` value check — the `agtermctl` CLI rejects a bad pane
 with this for session status/type/text, and over the raw socket `session.status` returns this same string;

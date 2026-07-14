@@ -64,6 +64,10 @@ public enum Command: String, Codable, Sendable {
     case themeSet = "theme.set"
     case themeList = "theme.list"
     case restoreClear = "restore.clear"
+    case tmuxAttach = "tmux.attach"
+    case tmuxDetach = "tmux.detach"
+    case tmuxList = "tmux.list"
+    case tmuxKill = "tmux.kill"
     /// UI-TEST-ONLY: force the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
     /// simulate a macOS light/dark flip; with NO name it READS the side the last config feed applied,
     /// so a test can assert the flip actually drove the reload. The server refuses it outside an
@@ -218,6 +222,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// `targets` and `close`; composes with the font flags. The MRU resolution is app-side (it needs the
     /// store's recency), so this only signals the intent.
     public var mru: Bool?
+    /// The ssh host for `tmux.attach` (e.g. `user@host`). Required by that command.
+    public var host: String?
 
     public init(name: String? = nil, cwd: String? = nil, targets: [String]? = nil,
                 workspace: String? = nil, workspaceName: String? = nil,
@@ -233,7 +239,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 path: String? = nil, color: String? = nil, opacity: Double? = nil, fit: String? = nil,
                 position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil,
                 light: String? = nil, dark: String? = nil,
-                close: Bool? = nil, fontSize: Double? = nil, autoSize: Bool? = nil, mru: Bool? = nil) {
+                close: Bool? = nil, fontSize: Double? = nil, autoSize: Bool? = nil, mru: Bool? = nil,
+                host: String? = nil) {
         self.name = name
         self.cwd = cwd
         self.targets = targets
@@ -281,6 +288,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.fontSize = fontSize
         self.autoSize = autoSize
         self.mru = mru
+        self.host = host
     }
 }
 
@@ -390,6 +398,12 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// addition uses, keeping Codable synthesized). Hidden-but-alive surfaces are included so control
     /// clients can zoom them without mutating split/scratch visibility first.
     public let surfaces: [ControlSurfaceNode]?
+    /// The tmux window this session mirrors (`@N`) when it is tmux-backed, else nil (omitted from the
+    /// JSON). With `tmuxPane`, the read side of the `tmux:` target addressing.
+    public let tmuxWindow: String?
+    /// The mirrored window's LEADING tmux pane (`%N`) — what a caller passes as
+    /// `--target tmux:$TMUX_PANE`; nil until the first layout arrives / for a local session.
+    public let tmuxPane: String?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 splitRatio: Double? = nil, splitFocused: Bool? = nil,
@@ -398,7 +412,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
-                surfaces: [ControlSurfaceNode]? = nil) {
+                surfaces: [ControlSurfaceNode]? = nil,
+                tmuxWindow: String? = nil, tmuxPane: String? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -423,6 +438,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.splitFontSize = splitFontSize
         self.scratchFontSize = scratchFontSize
         self.surfaces = surfaces
+        self.tmuxWindow = tmuxWindow
+        self.tmuxPane = tmuxPane
     }
 }
 
@@ -594,6 +611,23 @@ public struct ControlWindowNode: Codable, Sendable, Equatable {
 
 /// The successful payload: a new/affected id for mutating commands, a tree for `tree`, the selected text
 /// for `session.copy`. All optional.
+/// One live tmux `-CC` connection in the `tmux.list` result: its workspace uuid (the id used to
+/// address `tmux.detach`/`tmux.kill`), the target host (`local` for a local attach), the tmux
+/// SESSION name (with `host` it forms the connection's identity, so two connections to the same
+/// host stay distinguishable), and the display names of its mirrored windows.
+public struct ControlTmuxNode: Codable, Sendable, Equatable {
+    public var id: String
+    public var host: String
+    public var session: String?
+    public var windows: [String]
+    public init(id: String, host: String, session: String? = nil, windows: [String]) {
+        self.id = id
+        self.host = host
+        self.session = session
+        self.windows = windows
+    }
+}
+
 public struct ControlResult: Codable, Sendable, Equatable {
     public var id: String?
     public var tree: ControlTree?
@@ -625,12 +659,15 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var sync: Bool?
     public var light: String?
     public var dark: String?
+    /// The live tmux `-CC` connections for `tmux.list`.
+    public var tmuxConnections: [ControlTmuxNode]?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
                 affected: Int? = nil,
                 theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
-                sync: Bool? = nil, light: String? = nil, dark: String? = nil) {
+                sync: Bool? = nil, light: String? = nil, dark: String? = nil,
+                tmuxConnections: [ControlTmuxNode]? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
@@ -644,6 +681,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.sync = sync
         self.light = light
         self.dark = dark
+        self.tmuxConnections = tmuxConnections
     }
 }
 

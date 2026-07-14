@@ -22,19 +22,21 @@ extension ConnectionOptions {
 /// this directly (they target via the positional id, so `--window` has no meaning for them); the
 /// session/workspace/tree/font commands layer `--window` on top via `ClientOptions`.
 struct BasicOptions: ParsableArguments, ConnectionOptions {
-    /// Override the resolved socket path. Defaults to the `AGTERM_STATE_DIR`/app-support rendezvous.
+    /// Override the resolved socket path. Defaults to the `AGTERM_CONTROL_SOCKET` env, else the `AGTERM_STATE_DIR`/app-support rendezvous.
     @Option(name: .long, help: "Override the control socket path.")
     var socket: String?
 
     @Flag(name: .long, help: "Print the raw JSON response.")
     var json = false
 
-    /// Resolve the socket path: explicit `--socket`, else the agtermCore rendezvous resolver. Precedence:
-    /// `--socket` → `<AGTERM_STATE_DIR>/agterm.sock` → `<$HOME>/Library/Application Support/agterm/agterm.sock` →
-    /// `/tmp/agterm/agterm.sock`. `env` is injectable so the precedence is unit-testable; production passes the
-    /// process environment.
+    /// Resolve the socket path: explicit `--socket`, then `AGTERM_CONTROL_SOCKET`, else the agtermCore
+    /// rendezvous resolver. Precedence: `--socket` → `AGTERM_CONTROL_SOCKET` → `AGTERM_STATE_DIR` → app-support.
+    /// `env` is injectable so the precedence is unit-testable; production passes the process environment.
     func socketPath(env: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let socket { return socket }
+        // The same env override the app's `ControlServer.defaultSocketPath()` honors — what a
+        // forwarded-socket environment (ssh -R + docker bind-mount) exports instead of `--socket`.
+        if let override = env["AGTERM_CONTROL_SOCKET"], !override.isEmpty { return override }
         let appSupport = (env["HOME"].map { ($0 as NSString).appendingPathComponent("Library/Application Support/agterm") })
             ?? "/tmp/agterm"
         return ControlResolve.socketPath(stateDir: env["AGTERM_STATE_DIR"], appSupport: appSupport)
@@ -91,7 +93,8 @@ public struct Agtermctl: ParsableCommand {
         commandName: "agtermctl",
         abstract: "Drive agterm over its control socket.",
         subcommands: [Tree.self, Workspace.self, Session.self, Surface.self, Dashboard.self, Window.self, Quick.self,
-                      Sidebar.self, Notify.self, Font.self, Keymap.self, Config.self, Theme.self, Restore.self]
+                      Sidebar.self, Notify.self, Font.self, Keymap.self, Config.self, Theme.self, Restore.self,
+                      Tmux.self, TmuxPipe.self]
     )
 
     public init() {}

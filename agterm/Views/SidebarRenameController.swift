@@ -9,6 +9,9 @@ import AppKit
 @MainActor
 final class SidebarRenameController: NSObject, NSTextFieldDelegate {
     private let store: AppStore
+    /// The shared action seam: an inline session rename routes through it so a tmux-backed session's
+    /// rename reaches `rename-window` (backend-aware) instead of only relabeling the local mirror.
+    private let actions: AppActions
     weak var outlineView: NSOutlineView?
 
     /// Called after an inline rename ends (commit or cancel), so the Coordinator can hand keyboard
@@ -39,8 +42,9 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
     /// skip a row reload during the commit instant.
     var isCommitting: Bool { committing }
 
-    init(store: AppStore) {
+    init(store: AppStore, actions: AppActions) {
         self.store = store
+        self.actions = actions
         super.init()
     }
 
@@ -64,11 +68,16 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
         field.backgroundColor = theme.terminalBackgroundColor ?? .textBackgroundColor
         field.setAccessibilityIdentifier("edit-field")
         field.window?.makeFirstResponder(field)
-        editing = true
         // pause auto-follow while the rename field owns first responder: an armed idle jump would move the
         // outline selection off this row and yank focus into the followed terminal, silently committing the
-        // rename mid-edit. balanced by the resume in `restore` when editing ends.
-        store.suppressAutoFollow()
+        // rename mid-edit. balanced by the single resume in `restore` when editing ends — so take the
+        // suppression only on the FIRST begin of an edit session. a re-entrant beginEditing on the
+        // already-active field (e.g. the Rename Session shortcut pressed again mid-edit) must not stack a
+        // second suppress that `restore`'s lone resume can't balance, which would wedge the counted gate
+        // and leave auto-follow off for the window until relaunch. (switching to ANOTHER row is fine:
+        // makeFirstResponder above ended the prior edit → `restore` already resumed and cleared `editing`.)
+        if !editing { store.suppressAutoFollow() }
+        editing = true
     }
 
     /// Intercepts Esc during an inline rename. The field is focused via `makeFirstResponder`
@@ -111,7 +120,13 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
         guard let node, !cancelled else { return }
 
         switch node.kind {
-        case .session: store.renameSession(node.id, to: newValue)
+        // backend-aware: a tmux-backed session routes to rename-window (the name follows via the
+        // %window-renamed echo); a normal session renames locally. The local half uses THIS window's
+        // store, not actions.renameSession's frontmost fallback — the commit fires on focus loss, which
+        // may be a click INTO another window that already became key (same store-explicit pattern as
+        // the session.rename control arm).
+        case .session:
+            if !actions.renameTmuxSession(node.id, to: newValue) { store.renameSession(node.id, to: newValue) }
         case .workspace: store.renameWorkspace(node.id, to: newValue)
         }
     }

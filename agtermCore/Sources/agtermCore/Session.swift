@@ -60,6 +60,11 @@ public final class Session: Identifiable {
     /// display and owned here so it survives sidebar/detail view churn.
     @ObservationIgnored public var surface: (any TerminalSurface)?
 
+    /// When set, this session mirrors a tmux `-CC` window (see `TmuxBinding`): its lifecycle
+    /// operations (rename/close/new) route to tmux instead of running locally. `@ObservationIgnored`
+    /// and absent from `snapshot()` — ephemeral tmux mirror state, never persisted.
+    @ObservationIgnored public var tmuxBinding: TmuxBinding?
+
     /// Whether the session is shown as a one-level vertical split (two panes side by
     /// side). Observed, so the detail pane shows/hides the second pane when toggled.
     public var isSplit: Bool = false

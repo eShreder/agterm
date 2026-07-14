@@ -38,6 +38,14 @@ The programmatic control channel (`agtermctl` over a unix socket) follows the sa
 
 See `CLAUDE.md` for the socket lifecycle, addressing, command catalog, and the keep-in-sync convention.
 
+### tmux relay (split across both modules, plus a third process)
+
+Native `tmux -CC` sessions (`tmux.attach` / File ▸ Attach tmux Session…) mirror each remote tmux window into an ordinary agterm session — **no libghostty fork**. Three pieces, same core/app split:
+
+- **`agtermCore` (host-free, unit-tested):** `TmuxGateway` (the `-CC` control-stream demux, splitting the pre-handshake ssh-auth bootstrap from control mode), `TmuxControlParser`/`TmuxEvent` (notification parsing), `TmuxSessionModel` (window bookkeeping → effects), `TmuxWindowList`/`TmuxLayout` (reply parsing), `RelayProtocol` (the framed data/resize wire format shared with the child), and `PTYProcess` (the PTY transport that spawns `ssh -tt … tmux -CC` as a session leader with the pty as its controlling terminal, so ssh auth prompts work).
+- **App target (`agterm/Tmux/`):** one `TmuxController` per connection orchestrates events → an EPHEMERAL mirror workspace (never persisted); each tmux window gets a per-window `RelaySocket` (owner-only dir, fail-closed) bridging tmux `%output` to the surface and keystrokes/resizes back to `send-keys`/`refresh-client -C`.
+- **Third process:** each mirror session is a STOCK exec command-session running `agtermctl tmux-pipe --socket <path>` — its stdin/stdout ARE the terminal, relayed over the socket. Because every surface is a normal local-PTY exec surface, search, notifications, and `view.session` linkage work unchanged.
+
 ### Sidebar (NSOutlineView)
 
 `WorkspaceSidebar` is an `NSViewRepresentable` wrapping an `NSOutlineView` (`.plain` style, with a custom row height and a content inset matching the terminal's ghostty padding). It replaces an earlier SwiftUI `List`, which could not do reliable cross-section drag-and-drop. A `@MainActor` `Coordinator` is the data source and delegate, backed by `AppStore`:

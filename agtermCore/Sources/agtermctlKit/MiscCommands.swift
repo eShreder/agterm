@@ -376,3 +376,65 @@ struct Font: ParsableCommand {
         }
     }
 }
+
+// MARK: - tmux (-CC control mode)
+
+/// `agtermctl tmux attach|detach|list|kill` — the connection-level tmux control verbs. Distinct from
+/// the internal `tmux-pipe` relay child (a root subcommand, not part of this group).
+struct Tmux: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tmux",
+        abstract: "Attach/detach/list native tmux -CC sessions.",
+        subcommands: [Attach.self, Detach.self, List.self, Kill.self])
+
+    /// `tmux attach <host> [--session <name>] [--workspace <name>]` — start a gateway and mirror the
+    /// remote tmux session's windows as native agterm sessions. Echoes the connection id (create-like:
+    /// the id isn't known yet, and it's what `tmux detach`/`kill` address).
+    struct Attach: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Attach to a remote tmux -CC session over ssh.")
+        @Argument(help: "The ssh host (e.g. user@host).") var host: String
+        @Option(name: .long, help: "The tmux session name (default: main).") var session: String?
+        @Option(name: .long, help: "Override the created workspace name.") var workspace: String?
+        @OptionGroup var options: BasicOptions
+        var echoesResultID: Bool { true }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxAttach, args: ControlArgs(name: session, workspace: workspace, host: host))
+        }
+    }
+
+    /// `tmux detach [connection-id]` — soft detach (tmux survives server-side). No id = the only/first
+    /// live connection.
+    struct Detach: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Detach a tmux connection (tmux survives).")
+        @Argument(help: "Connection id (the tmux workspace uuid); omit for the only live connection.")
+        var connection: String?
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxDetach, target: connection)
+        }
+    }
+
+    /// `tmux list` — the live tmux connections (id, host, window names).
+    struct List: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "List active tmux connections.")
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxList)
+        }
+    }
+
+    /// `tmux kill [connection-id]` — hard remote `kill-session`. No id = the only/first live connection.
+    struct Kill: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Kill a tmux connection remotely (kill-session).")
+        @Argument(help: "Connection id (the tmux workspace uuid); omit for the only live connection.")
+        var connection: String?
+        @OptionGroup var options: BasicOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .tmuxKill, target: connection)
+        }
+    }
+}

@@ -177,7 +177,8 @@ public final class AppStore {
     }
 
     /// Projects this store's workspace/session model into the control-channel `tree` payload. Foreground
-    /// command lookup is supplied by the host because live process inspection is platform-specific.
+    /// command lookup and tmux identity are supplied by the host because live process inspection and the
+    /// tmux controller registry are platform/app-specific.
     public func controlTree(foreground: (Session) -> [String]? = { _ in nil },
                             splitForeground: (Session) -> [String]? = { _ in nil },
                             fontSize: (Session) -> Double? = { _ in nil },
@@ -188,7 +189,8 @@ public final class AppStore {
                             dashboardMembers: () -> [String]? = { nil },
                             dashboardHighlighted: () -> String? = { nil },
                             dashboardFontSize: () -> Double? = { nil },
-                            dashboardFontMode: () -> String? = { nil }) -> ControlTree {
+                            dashboardFontMode: () -> String? = { nil },
+                            tmuxIdentity: (Session) -> (window: String, pane: String?)? = { _ in nil }) -> ControlTree {
         let activeID = selectedSessionID
         let activeWorkspaceID = activeID.flatMap { workspace(forSession: $0)?.id }
         let nodes = workspaces.map { workspace in
@@ -203,6 +205,7 @@ public final class AppStore {
                                               active: surface.isActive(in: session),
                                               visible: surface.isVisible(in: session))
                 }
+                let tmux = tmuxIdentity(session)
                 return ControlSessionNode(id: session.id.uuidString, name: session.displayName,
                                           cwd: session.effectiveCwd, title: session.oscTitle,
                                           active: session.id == activeID,
@@ -222,7 +225,8 @@ public final class AppStore {
                                           fontSize: fontSize(session),
                                           splitFontSize: splitFontSize(session),
                                           scratchFontSize: scratchFontSize(session),
-                                          surfaces: surfaces)
+                                          surfaces: surfaces,
+                                          tmuxWindow: tmux?.window, tmuxPane: tmux?.pane)
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
                                         active: workspace.id == activeWorkspaceID,
@@ -243,8 +247,8 @@ public final class AppStore {
     /// return only the focused one and the new workspace would be silently hidden until
     /// the user manually unfocuses (the same auto-reveal contract as `addSession`).
     @discardableResult
-    public func addWorkspace(name: String) -> Workspace {
-        let workspace = Workspace(name: name)
+    public func addWorkspace(name: String, ephemeral: Bool = false) -> Workspace {
+        let workspace = Workspace(name: name, ephemeral: ephemeral)
         workspaces.append(workspace)
         focusedWorkspaceID = nil
         save()
@@ -272,10 +276,19 @@ public final class AppStore {
     /// nil the session is appended (the default); with `at` set it is inserted at the clamped index
     /// (`0...count`), backing the control `session.new --after`/`--before` placement. Returns nil if no
     /// workspace matches.
+    /// `select: false` appends WITHOUT moving the selection (or the focused-workspace filter) — the
+    /// tmux mirror's `%window-add` echo uses it so a REMOTE window creation can't steal focus.
+    /// `allowEphemeral` permits adding into an ephemeral tmux mirror workspace (the `TmuxController`
+    /// relay sessions use it); a plain user/control session into an ephemeral workspace is rejected.
     @discardableResult
     public func addSession(toWorkspace workspaceID: UUID, cwd: String, command: String? = nil,
-                           name: String? = nil, at index: Int? = nil) -> Session? {
+                           name: String? = nil, at index: Int? = nil,
+                           allowEphemeral: Bool = false, select: Bool = true) -> Session? {
         guard let wsIndex = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return nil }
+        // An ephemeral tmux mirror hosts ONLY its controller's tmux-backed windows (added with
+        // `allowEphemeral`). Reject a plain user/control session there: it would be killed when detach
+        // tears the mirror down. The `TmuxController` passes `allowEphemeral: true` for its relay sessions.
+        guard allowEphemeral || !workspaces[wsIndex].ephemeral else { return nil }
         let session = Session(initialCwd: cwd, customName: name?.trimmedOrNil)
         session.initialCommand = command
         if let index {
@@ -284,9 +297,11 @@ public final class AppStore {
         } else {
             workspaces[wsIndex].sessions.append(session)
         }
-        selectedSessionID = session.id
-        autoUnfocusIfOutsideFocus(session.id) // a control-driven add into another workspace must reveal it
-        recordRecency()
+        if select {
+            selectedSessionID = session.id
+            autoUnfocusIfOutsideFocus(session.id) // a control-driven add into another workspace must reveal it
+            recordRecency()
+        }
         save()
         return session
     }
@@ -422,44 +437,6 @@ public final class AppStore {
         save()
     }
 
-    /// Whether a workspace may be removed: one workspace is always kept, so removal is
-    /// allowed only when more than one exists.
-    public var canRemoveWorkspace: Bool { workspaces.count > 1 }
-
-    /// Removes a workspace and every session in it, tearing down each session's surfaces
-    /// and pruning them from the recency stack. No-ops unless more than one workspace
-    /// exists (the last one is kept). If the active session lived in the removed
-    /// workspace, reselects the first session of a remaining workspace (the one that
-    /// shifted into the removed slot, else the first non-empty workspace), or nil when
-    /// no sessions remain.
-    public func removeWorkspace(_ workspaceID: UUID) {
-        guard canRemoveWorkspace, let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
-        let workspace = workspaces[index]
-        let removingActive = selectedSessionID.map { id in workspace.sessions.contains { $0.id == id } } ?? false
-        recordRecentClosedWorkspace(workspace, selectedSessionID: removingActive ? selectedSessionID : nil)
-        for session in workspace.sessions {
-            session.surface?.teardown()
-            session.splitSurface?.teardown()
-            session.overlaySurface?.teardown()
-            session.scratchSurface?.teardown()
-            WatermarkStorage.removeRenderedText(sessionID: session.id) // drop any rendered .text PNG; the session is gone
-            sessionRecency.remove(session.id)
-        }
-        if focusedWorkspaceID == workspaceID { focusedWorkspaceID = nil } // the focused root is gone
-        workspaces.remove(at: index)
-        if removingActive {
-            let fallbackIndex = min(index, workspaces.count - 1)
-            selectedSessionID = workspaces[fallbackIndex].sessions.first?.id
-                ?? workspaces.first(where: { !$0.sessions.isEmpty })?.sessions.first?.id
-            replaceSidebarSelection(with: selectedSessionID)
-            autoUnfocusIfOutsideFocus(selectedSessionID) // the reselected session may live outside the focused workspace
-            recordRecency()
-        } else {
-            pruneSidebarSelection()
-        }
-        save()
-    }
-
     /// Moves a session to another workspace (or reorders within the same one),
     /// keeping the **same** `Session` instance so its attached surface and live
     /// shell survive. `index` is the destination position in the target's session
@@ -470,9 +447,21 @@ public final class AppStore {
     /// Moving the **active** session out of the focused workspace auto-unfocuses
     /// (the auto-reveal contract — the active session must stay inside the visible
     /// set); moving a non-active session leaves focus intact.
-    public func moveSession(_ sessionID: UUID, toWorkspace targetID: UUID, at index: Int? = nil) {
-        guard let source = location(ofSession: sessionID) else { return }
-        guard let targetIndex = workspaces.firstIndex(where: { $0.id == targetID }) else { return }
+    /// Returns `false` when the move is REFUSED (unknown session/target, or a
+    /// cross-ephemeral boundary) so a caller can report the refusal instead of a
+    /// silent no-op; `true` when the session was actually moved.
+    @discardableResult
+    public func moveSession(_ sessionID: UUID, toWorkspace targetID: UUID, at index: Int? = nil) -> Bool {
+        guard let source = location(ofSession: sessionID) else { return false }
+        guard let targetIndex = workspaces.firstIndex(where: { $0.id == targetID }) else { return false }
+        // Refuse to move a session ACROSS an ephemeral (tmux mirror) boundary. A mirror hosts only its
+        // controller's tmux-backed sessions: moving a local session IN would kill it when detach tears the
+        // mirror down, and moving a tmux session OUT would strand it as a dead local session (its relay
+        // socket closed on detach, and it would then wrongly persist). A same-workspace reorder is exempt.
+        if source.workspaceIndex != targetIndex,
+           workspaces[source.workspaceIndex].ephemeral || workspaces[targetIndex].ephemeral {
+            return false
+        }
 
         let session = workspaces[source.workspaceIndex].sessions.remove(at: source.sessionIndex)
         let destination = max(0, min(index ?? workspaces[targetIndex].sessions.count, workspaces[targetIndex].sessions.count))
@@ -480,6 +469,7 @@ public final class AppStore {
         if sessionID == selectedSessionID { autoUnfocusIfOutsideFocus(sessionID) }
         pruneSidebarSelection()
         save()
+        return true
     }
 
     /// Moves selected sessions in their current tree order. With `index == nil`, a multi-session context
@@ -820,7 +810,8 @@ public final class AppStore {
     /// live `currentCwd` (or `initialCwd` if no PWD report has arrived). Runs on
     /// `@MainActor`; the resulting value is `Sendable` and safe to hand to a writer.
     public func snapshot() -> Snapshot {
-        let workspaceSnapshots = workspaces.map { workspace in
+        // Ephemeral workspaces (tmux -CC mirrors) never persist — they rebuild from live tmux on attach.
+        let workspaceSnapshots = workspaces.filter { !$0.ephemeral }.map { workspace in
             let sessions = workspace.sessions.map(sessionSnapshot)
             // only a collapsed workspace writes the flag; an expanded one omits it (nil) so an all-expanded
             // tree serializes identically to a legacy snapshot.

@@ -32,7 +32,8 @@ struct AppStoreOrganizationTests {
         let personal = store.addWorkspace(name: "personal")
         let a = store.addSession(toWorkspace: work.id, cwd: "/a")!
         let b = store.addSession(toWorkspace: personal.id, cwd: "/b")!
-        store.moveSession(a.id, toWorkspace: personal.id)
+        let moved = store.moveSession(a.id, toWorkspace: personal.id)
+        #expect(moved == true) // a real move reports success
         #expect(store.workspaces[0].sessions.isEmpty)
         #expect(store.workspaces[1].sessions.map(\.id) == [b.id, a.id])
     }
@@ -122,6 +123,124 @@ struct AppStoreOrganizationTests {
     @Test func addSessionUnknownWorkspaceReturnsNilWithIndex() {
         let store = makeStore()
         #expect(store.addSession(toWorkspace: UUID(), cwd: "/a", at: 0) == nil)
+    }
+
+    // MARK: - Ephemeral (tmux mirror) workspace guards
+
+    @Test func moveSessionIntoEphemeralIsRejected() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        let session = store.addSession(toWorkspace: work.id, cwd: "/a")!
+        let moved = store.moveSession(session.id, toWorkspace: mirror.id) // would be killed on detach — refused
+        #expect(moved == false)                                        // reports the refusal, not a silent ok
+        #expect(store.workspaces[0].sessions.map(\.id) == [session.id]) // stayed in `work`
+        #expect(store.workspaces[1].sessions.isEmpty)                   // mirror untouched
+    }
+
+    @Test func moveSessionOutOfEphemeralIsRejected() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        let tmuxSession = store.addSession(toWorkspace: mirror.id, cwd: "/a", allowEphemeral: true)!
+        let moved = store.moveSession(tmuxSession.id, toWorkspace: work.id) // would strand a dead session — refused
+        #expect(moved == false)                                            // reports the refusal, not a silent ok
+        #expect(store.workspaces[0].sessions.isEmpty)                       // `work` untouched
+        #expect(store.workspaces[1].sessions.map(\.id) == [tmuxSession.id]) // stayed in the mirror
+    }
+
+    @Test func reorderWithinEphemeralStillWorks() {
+        let store = makeStore()
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        let a = store.addSession(toWorkspace: mirror.id, cwd: "/a", allowEphemeral: true)!
+        let b = store.addSession(toWorkspace: mirror.id, cwd: "/b", allowEphemeral: true)!
+        let moved = store.moveSession(a.id, toWorkspace: mirror.id, at: 2) // same-workspace reorder is exempt
+        #expect(moved == true)  // the return contract too, like the rejection tests assert theirs
+        #expect(store.workspaces[0].sessions.map(\.id) == [b.id, a.id])
+    }
+
+    @Test func addSessionWithoutSelectKeepsSelection() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let a = store.addSession(toWorkspace: work.id, cwd: "/a")!
+        // the tmux mirror's %window-add echo path: append without stealing the user's selection
+        let b = store.addSession(toWorkspace: work.id, cwd: "/b", select: false)!
+        #expect(store.selectedSessionID == a.id)
+        #expect(store.workspaces[0].sessions.map(\.id) == [a.id, b.id])
+    }
+
+    @Test func addSessionWithoutSelectKeepsWorkspaceFocus() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let other = store.addWorkspace(name: "other")
+        let a = store.addSession(toWorkspace: work.id, cwd: "/a")!
+        store.setFocusedWorkspace(work.id)
+        store.addSession(toWorkspace: other.id, cwd: "/b", select: false)
+        // an unselected add outside the focused workspace must not clear the focus filter
+        #expect(store.focusedWorkspaceID == work.id)
+        #expect(store.selectedSessionID == a.id)
+    }
+
+    @Test func addPlainSessionToEphemeralIsRejected() {
+        let store = makeStore()
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        #expect(store.addSession(toWorkspace: mirror.id, cwd: "/a") == nil) // plain add refused
+        #expect(store.addSession(toWorkspace: mirror.id, cwd: "/a", allowEphemeral: true) != nil) // controller add ok
+        #expect(store.workspaces[0].sessions.count == 1)
+    }
+
+    @Test func canRemoveWorkspaceIgnoresEphemeralMirrors() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        #expect(!store.canRemoveWorkspace) // only ONE persistent workspace — deleting it would save an empty tree
+        store.removeWorkspace(work.id)
+        #expect(store.workspaces.contains { $0.id == work.id }) // refused: the last persistent workspace stays
+    }
+
+    @Test func canRemoveWorkspaceByIDExemptsEphemeralMirror() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        // The common case: ONE persistent workspace + one mirror. The global gate is false, but the
+        // per-id check must still permit deleting the mirror (whose removal routes to detach) — otherwise
+        // the delete affordances early-return before the ephemeral-detach path.
+        #expect(!store.canRemoveWorkspace)
+        #expect(store.canRemoveWorkspace(mirror.id))  // ephemeral mirror is always removable
+        #expect(!store.canRemoveWorkspace(work.id))   // the sole persistent workspace still stays
+        #expect(!store.canRemoveWorkspace(UUID()))    // unknown id → false
+    }
+
+    @Test func canRemoveActiveWorkspaceExemptsSelectedMirror() {
+        let store = makeStore()
+        let work = store.addWorkspace(name: "work")
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        let normal = store.addSession(toWorkspace: work.id, cwd: "/a")!
+        let tmuxSession = store.addSession(toWorkspace: mirror.id, cwd: "/b", allowEphemeral: true)!
+        store.selectSession(normal.id)
+        #expect(!store.canRemoveActiveWorkspace) // active = sole persistent workspace, not removable
+        store.selectSession(tmuxSession.id)
+        #expect(store.canRemoveActiveWorkspace)  // active = ephemeral mirror, removable (menu/palette gate)
+    }
+
+    @Test func removeEphemeralWorkspaceSucceedsAsSoleWorkspace() {
+        let store = makeStore()
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        // teardown removes the mirror even when it is the only workspace (bypasses keep-at-least-one).
+        store.removeWorkspace(mirror.id)
+        #expect(store.workspaces.isEmpty)
+    }
+
+    @Test func removeSoleEphemeralWorkspaceWithActiveSessionClearsSelection() {
+        let store = makeStore()
+        let mirror = store.addWorkspace(name: "tmux: host/main", ephemeral: true)
+        let tmuxSession = store.addSession(toWorkspace: mirror.id, cwd: "/a", allowEphemeral: true)!
+        store.selectSession(tmuxSession.id)
+        // Removing the sole workspace empties the tree; the reselection must not subscript-crash on the
+        // now-empty array and should clear the selection.
+        store.removeWorkspace(mirror.id)
+        #expect(store.workspaces.isEmpty)
+        #expect(store.selectedSessionID == nil)
     }
 
     @Test func setFlagTogglesAndPersists() {
@@ -520,7 +639,8 @@ struct AppStoreOrganizationTests {
         let work = store.addWorkspace(name: "work")
         let personal = store.addWorkspace(name: "personal")
         let a = store.addSession(toWorkspace: work.id, cwd: "/a")!
-        store.moveSession(UUID(), toWorkspace: personal.id)
+        let moved = store.moveSession(UUID(), toWorkspace: personal.id)
+        #expect(moved == false) // unknown session is refused, not a silent ok
         #expect(store.workspaces[0].sessions.map(\.id) == [a.id])
         #expect(store.workspaces[1].sessions.isEmpty)
     }
@@ -529,7 +649,8 @@ struct AppStoreOrganizationTests {
         let store = makeStore()
         let work = store.addWorkspace(name: "work")
         let a = store.addSession(toWorkspace: work.id, cwd: "/a")!
-        store.moveSession(a.id, toWorkspace: UUID())
+        let moved = store.moveSession(a.id, toWorkspace: UUID())
+        #expect(moved == false) // unknown target is refused, not a silent ok
         #expect(store.workspaces[0].sessions.map(\.id) == [a.id])
     }
 

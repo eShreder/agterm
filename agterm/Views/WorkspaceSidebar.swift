@@ -207,7 +207,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         init(store: AppStore, actions: AppActions) {
             self.store = store
             self.actions = actions
-            self.renameController = SidebarRenameController(store: store)
+            self.renameController = SidebarRenameController(store: store, actions: actions)
             super.init()
             // seed from the live mirror (SettingsModel applied the persisted size at launch, before any
             // window's sidebar is built) so the first appearanceChanged doesn't rebuild for no change.

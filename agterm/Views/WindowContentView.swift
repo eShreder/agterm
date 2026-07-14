@@ -172,7 +172,7 @@ struct WindowContentView: View {
         // blend the title bar with the terminal; report frontmost/close to the library; surface the
         // window un-minimized on launch. the title token makes updateNSView re-run the blend on a
         // session switch.
-        .background(WindowAccessor(titleToken: windowTitle, windowID: windowID, library: library, store: store))
+        .background(WindowAccessor(titleToken: windowTitle, windowID: windowID, library: library, store: store, actions: actions))
         // own a per-window quick terminal: register it so the frontmost-window call sites resolve it,
         // and spawn its shell in THIS window's active session's directory.
         .onAppear {
