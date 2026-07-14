@@ -211,8 +211,7 @@ paths:
   limit).
   The CLI honors the SAME `AGTERM_CONTROL_SOCKET` env as its default socket
   (precedence `--socket` -> `AGTERM_CONTROL_SOCKET` -> `AGTERM_STATE_DIR` -> app-support,
-  `BasicOptions.socketPath(env:)`, unit-tested via the injectable env) — what a forwarded-socket
-  container exports instead of passing `--socket` on every call (`docs/container-control.md`).
+  `BasicOptions.socketPath(env:)`, unit-tested via the injectable env).
   The socket is `chmod 0600`.
   Each accepted connection sets `SO_RCVTIMEO` (5 s, alongside `SO_NOSIGPIPE`) so a stalled client can't
   wedge the serial accept loop — a timed-out `read()` returns `EAGAIN`, which `readLine` (any non-`EINTR`
@@ -1392,17 +1391,10 @@ paths:
   **Dev gates:** `AGTERM_TMUX_LOCAL=1` attaches a local `tmux -CC` at launch (no ssh) — the deterministic
   dev gate for iterating without a remote host; `AGTERM_TMUX_BIN`/`AGTERM_TMUX_SOCKET` pick the tmux
   binary/server.
-  **Linux portability (HARD): `agtermctl` builds on Linux** — the container-control story
-  (`docs/container-control.md`), enforced by CI's `linux` job (`swift build --product agtermctl`,
-  `swift:6.0` container).
-  Darwin-only transports (`PTYProcess`, `TmuxGateway`, the `TmuxPipeRelay` loop) are gated whole-file
-  or per-block with `#if canImport(Darwin)`; POSIX call sites in CLI-reachable code need Glibc shims
-  (Glibc types `SOCK_STREAM` as an enum — `Int32(SOCK_STREAM.rawValue)`).
-  Anything reachable from `agtermctl` must not assume Darwin.
   **`tmux:` target addressing sugar (no new command).**
   `--target tmux:%<pane>` / `tmux:@<window>` resolves a LIVE mirrored session by its tmux pane/window
-  id, for a caller that only has a tmux identity handy — the driving case is a container hook that sees
-  `$TMUX_PANE` in its environment (a forwarded tmux pane) with no agterm UUID to hand it.
+  id, for a caller that only has a tmux identity handy (a `$TMUX_PANE` from a local tmux, or a pane/window
+  id read back from `tree`) with no agterm UUID to hand it.
   `ControlTargetResolver.resolveSessionTarget` strips the `tmux:` prefix and maps the payload through
   the `tmuxLookup` closure (wired from `ControlServer.init` to `AppActions.tmuxSession(forTarget:)`,
   which searches every live `TmuxController`) BEFORE the normal UUID/prefix resolution runs, so a

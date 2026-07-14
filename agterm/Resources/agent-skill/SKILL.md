@@ -21,7 +21,7 @@ when_to_use: >
   window.select, window.resize, window.move, window.zoom, window.fullscreen, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, config.reload,
   theme.set, theme.list, select theme, edit keymap, show an image, display an image inline, show-image,
   tmux.attach, tmux.detach, tmux.list, tmux.kill, tmux attach, attach tmux session, tmux -CC,
-  tmux: target, TMUX_PANE, container control socket, AGTERM_CONTROL_SOCKET,
+  tmux: target, TMUX_PANE, AGTERM_CONTROL_SOCKET,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
   keymap editor won't open, custom action / custom command not working, agterm logs, file an agterm
   bug, report an agterm issue, open an agterm discussion / feature request.
@@ -112,8 +112,8 @@ Commands that target a session or workspace take `--target` (default `active`):
 - a full UUID (case-insensitive), or a unique **prefix** of one (git-style). Zero matches → `notFound`
   error; two or more → `ambiguous` error listing candidates.
 - `tmux:%<pane>` / `tmux:@<window>` — sugar for a session mirrored from a native tmux attach, e.g.
-  `--target "tmux:$TMUX_PANE"` from inside the mirrored pane itself. See **reference.md** for the
-  container-hook recipe and its leading-pane-only limitation.
+  `--target "tmux:$TMUX_PANE"` when you have a tmux pane id in hand. See **reference.md** for the
+  recipe and its leading-pane-only limitation.
 
 `window.*` commands take the window id/prefix/`active` as a positional argument. Other commands accept
 a global `--window <id|prefix|active>` to operate on a specific window's tree (default: the frontmost).
