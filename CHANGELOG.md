@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.15.1 - 2026-07-17
+
+### Bug Fixes
+
+- renaming a session in the flagged view no longer bakes the ` : workspace` suffix into the name; the inline editor now seeds the bare session name instead of the decorated row label #243 @umputun
+
 ## v0.15.0 - 2026-07-17
 
 ### New Features
