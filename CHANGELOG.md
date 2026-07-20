@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.15.3 - 2026-07-20
+
+### Improvements
+
+- `agtermctl session new --command CMD --wait` holds the session open on the press-any-key prompt after the command exits, so a build/test/deploy's final output or an early failure stays readable instead of the session vanishing; the session-surface counterpart of `overlay open --wait`, opt-in with the default unchanged #255 @umputun
+
+### Bug Fixes
+
+- pressing a bare modifier key (⌘/⇧/⌥) no longer logs a repeated AppKit assertion on every keypress, and bare modifier press/release events reach the terminal again #261 @umputun
+- double-clicking a word in the shell prompt (for example a branch name) no longer moves the input cursor to the start of the line, so a following paste inserts at the right position #263 @umputun
+
 ## v0.15.2 - 2026-07-18
 
 ### Improvements
