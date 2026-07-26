@@ -6,7 +6,8 @@ description: >
   reorder sessions and workspaces; split panes; toggle the scratch terminal; run a program in an overlay
   and read its exit status; post a HUD panel or a desktop notification; show a native picker with
   caller-supplied choices or a question dialog with named buttons; display an image inline; type into a
-  session, copy its selection or search its scrollback; manage windows; change font size; set the theme;
+  session, copy its selection or search its scrollback; manage windows; attach a remote tmux -CC session
+  so each tmux window becomes a native session; change font size; set the theme;
   reload or edit the keymap and the agterm-scoped ghostty config; subscribe to status, notification,
   lifecycle and tree-change events.
   Covers the window/workspace/session addressing model and the AGTERM_* environment a spawned shell sees,
@@ -15,8 +16,8 @@ description: >
 when_to_use: >
   Trigger on: agterm, agtermctl, AGTERM_SESSION_ID, and, from inside a session, plain requests such as
   split the pane, close the overlay, show a message over the session, show a question dialog, agtermctl ask,
-  show an image inline, search the scrollback, attach a session from another Mac, what recipes are there,
-  the keymap editor will not open.
+  show an image inline, search the scrollback, attach a session from another Mac, attach a tmux session,
+  tmux -CC, what recipes are there, the keymap editor will not open.
 allowed-tools: Bash(agtermctl *)
 ---
 
@@ -121,6 +122,9 @@ Commands that target a session or workspace take `--target` (default `active`):
 - `active` — the selected session / current workspace.
 - a full UUID (case-insensitive), or a unique **prefix** of one (git-style). Zero matches → `notFound`
   error; two or more → `ambiguous` error listing candidates.
+- `tmux:%<pane>` / `tmux:@<window>` — sugar for a session mirrored from a native tmux attach, e.g.
+  `--target "tmux:$TMUX_PANE"` when you have a tmux pane id in hand. See **reference.md** for the
+  recipe and its leading-pane-only limitation.
 
 `window.*` commands take the window id/prefix/`active` as a positional argument. Other commands accept
 a global `--window <id|prefix|active>` to operate on a specific window's tree (default: the frontmost).
@@ -242,9 +246,10 @@ session that has a split — shown or hidden; omitted when there's no split, or 
 been shown — a shown split always reports a value, 0.5 when nothing set one) —
 the read side of `session resize`, record it to restore the exact divider), `splitFocused`
 (which pane holds focus in a session that has a split: `true` = split/right/bottom, `false` = primary/left/top; omitted
-when there's no split; the read side of `session focus`, record it to restore focus), and `surfaces`
+when there's no split; the read side of `session focus`, record it to restore focus), `surfaces`
 (`id`, `kind`, `active`, `visible`, and `backedByZmx` on primary/split entries) for `surface zoom` and
-`surface cursor`. The tree top level carries `zoomedSurface`
+`surface cursor`, and `tmuxWindow`/`tmuxPane` (the mirrored tmux window/leading-pane ids for a
+`tmux:`-backed session, omitted for a local one). The tree top level carries `zoomedSurface`
 (the control id of the currently zoomed surface, omitted when nothing is zoomed — the read side of
 `surface zoom`, so a script can check the zoom state and record-then-restore). It also carries the read
 side of the `dashboard` command (all omitted when no dashboard is open): `dashboardMembers` (the pane refs
@@ -311,7 +316,10 @@ omitted when expanded).
   source node's `tree.cwd` unless the source is a split focused off its primary pane, where `tree.cwd`
   reports the primary).
 - `session close [--target T ...]` — close one session, or repeat `--target` to close a batch with one
-  grace-period undo.
+  grace-period undo. **Backend-aware:** on a tmux-backed session (one mirrored from a `tmux -CC`
+  window), `session close` routes to `kill-window` and `session rename` to `rename-window` — so they
+  round-trip to the remote tmux, not just locally. (Opening a new tmux window is GUI-only: New Session
+  ⌘T on a tmux session; control `session new` always creates a local session.)
 - `session select` · `session rename <name>` · `session reveal` (select the focused pane's cwd in Finder).
 - `session go --to next|prev|first|last|next-attention|prev-attention` — move the selection between sessions.
 - `session move <workspace>` (relocate) or `session move --to up|down|top|bottom` (reorder within the
@@ -610,6 +618,21 @@ works as a preflight from a keymap-launched script, which has no `$TERM_PROGRAM_
 socket explicitly (`--socket "$AGTERM_SOCKET"`, or `"$AGT_SOCKET"` in a keymap child): a bare call
 resolves the DEFAULT socket, which may be another app. The same identity is on the tree top level as
 `app`.
+
+**tmux** — native `tmux -CC` sessions: each remote tmux window becomes a native agterm session (backed
+by a normal local terminal relaying to tmux — no engine fork, so search/notifications work).
+- `tmux attach <host> [--session NAME] [--workspace-name NAME]` — ssh to `<host>`, attach-or-create the tmux
+  session (`-CC`), and mirror its windows into a `tmux: host/session` workspace. Prints the connection
+  id (also on a repeat attach, which just focuses the existing connection).
+- `tmux list` — active connections: `<id>  <host>/<session>  [window names]` (the id is the tmux
+  workspace uuid).
+- `tmux detach [id]` — soft detach (tmux keeps running server-side); omit id for the only connection.
+- `tmux kill [id]` — hard remote `kill-session`. The id accepts a unique prefix (git-style,
+  case-insensitive) like every other target. v1 shows only a split window's leading pane.
+
+Sizing is per-connection: a mirrored surface's resize becomes `refresh-client -C`, which sizes the whole
+tmux client, so resizing one mirrored session (notably `session split` on it) reflows every window of
+that connection.
 
 ## Displaying an image inline
 
