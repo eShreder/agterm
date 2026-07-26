@@ -151,6 +151,15 @@ extension AppStore {
                                    sessionIndex: Int,
                                    id: UUID = UUID()) -> UUID? {
         guard let recentClosedStore else { return nil }
+        // A session of an ephemeral tmux mirror is a relay bound to a live per-window socket, so it must
+        // not enter Open Recent — the same exclusion `removeWorkspace` already applies to the mirror
+        // WORKSPACE. Reopening one is not a no-op: `restoreRecentClosed` inserts the rebuilt session
+        // straight into `workspaces` (bypassing `addSession`'s ephemeral gate) and, once the mirror is
+        // gone, first rebuilds a NORMAL workspace shell to hold it — which then PERSISTS a session whose
+        // command relays to a socket that no longer exists, the exact zombie the snapshot filter exists
+        // to prevent. The gate lives here, at the single record choke point, so the hard close, the
+        // grace-period expiry, and any future caller are all covered.
+        guard workspaces.first(where: { $0.id == workspaceID })?.ephemeral != true else { return nil }
         recentClosedStore.record(RecentClosedItem(
             id: id,
             kind: .session,

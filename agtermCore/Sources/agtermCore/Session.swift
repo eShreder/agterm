@@ -131,6 +131,11 @@ public final class Session: Identifiable {
         }
     }
 
+    /// When set, this session mirrors a tmux `-CC` window (see `TmuxBinding`): its lifecycle
+    /// operations (rename/close/new) route to tmux instead of running locally. `@ObservationIgnored`
+    /// and absent from `snapshot()` — ephemeral tmux mirror state, never persisted.
+    @ObservationIgnored public var tmuxBinding: TmuxBinding?
+
     /// Whether the session is SHOWN as a one-level split; the detail pane shows/hides the second pane.
     public var isSplit: Bool = false
 
