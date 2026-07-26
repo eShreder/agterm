@@ -220,7 +220,7 @@ struct WindowContentView: View {
         })
         // blend the title bar with the terminal; report frontmost/close to the library; surface the window
         // un-minimized on launch. the title token re-runs the blend in updateNSView on a session switch.
-        .background(WindowAccessor(titleToken: windowTitle, windowID: windowID, library: library, store: store))
+        .background(WindowAccessor(titleToken: windowTitle, windowID: windowID, library: library, store: store, actions: actions))
         .onAppear {
             terminalZoom.targetResolver = { [store] in
                 TerminalZoomController.resolveTarget(store: store)

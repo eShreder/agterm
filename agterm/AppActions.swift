@@ -11,6 +11,9 @@ final class AppActions {
     /// so menu bar / palette / control channel all drive the window the user is looking at.
     let library: WindowLibrary
 
+    // the live tmux connections, driven by AppActions+Tmux.swift (a stored property can't sit in an extension)
+    var tmuxControllers: [TmuxController] = []
+
     /// The frontmost open window's store, the target of every mutating action. Nil only with all windows
     /// closed (quitting), where callers no-op.
     var store: AppStore? { library.activeStore }
@@ -115,6 +118,7 @@ final class AppActions {
 
     func newSession() {
         guard uiActionsEnabled else { return }
+        if newTmuxWindowForActiveSession() { return } // tmux-backed: ⌘T adds a tmux WINDOW (AppActions+Tmux)
         guard let store, let workspaceID = store.currentWorkspaceID,
               let session = store.addSession(toWorkspace: workspaceID, cwd: resolvedNewSessionCwd())
         else { return }
@@ -329,6 +333,7 @@ final class AppActions {
     }
 
     private func closeSessionAfterConfirmation(_ id: UUID, in store: AppStore) {
+        if closeTmuxSession(id) { return } // a tmux-backed session routes to kill-window (AppActions+Tmux)
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {
                 _ = store.softCloseSession(id)
@@ -465,14 +470,16 @@ final class AppActions {
     }
 
     /// Delete a workspace and all its sessions from `store`'s window. Confirms while it still has sessions
-    /// (the delete ends their shells), no prompt when empty, no-op when only one workspace remains — one is
-    /// always kept. The row's "Delete Workspace" passes its OWN window-local store: the frontmost one would
-    /// find no such id and silently do nothing. Ungated like the other store-scoped row actions — a window
-    /// renders no sidebar while its zoom or dashboard is up, so the row menu is unreachable in exactly the
-    /// state the gate covers, and a frontmost modal must not block a background window's row.
+    /// (the delete ends their shells), no prompt when empty, no-op when only one PERSISTENT workspace
+    /// remains — one is always kept, while an ephemeral tmux mirror stays removable. The row's "Delete
+    /// Workspace" passes its OWN window-local store: the frontmost one would find no such id and silently
+    /// do nothing. Ungated like the other store-scoped row actions — a window renders no sidebar while its
+    /// zoom or dashboard is up, so the row menu is unreachable in exactly the state the gate covers, and a
+    /// frontmost modal must not block a background window's row.
     func deleteWorkspace(_ workspaceID: UUID, in store: AppStore) {
-        guard store.canRemoveWorkspace,
+        guard store.canRemoveWorkspace(workspaceID),
               let workspace = store.workspaces.first(where: { $0.id == workspaceID }) else { return }
+        if deleteTmuxMirror(workspace, in: store) { return } // a tmux mirror detaches instead (AppActions+Tmux)
         if !workspace.sessions.isEmpty, !confirmDeleteWorkspace(workspace) { return }
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {

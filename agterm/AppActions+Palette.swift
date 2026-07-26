@@ -22,7 +22,7 @@ extension AppActions {
     var paletteContext: PaletteContext {
         let activeStore = store
         return PaletteContext(
-            canRemoveWorkspace: activeStore?.canRemoveWorkspace == true,
+            canRemoveWorkspace: activeStore?.canRemoveActiveWorkspace == true,
             hasFlaggedSessions: activeStore?.flaggedSessions.isEmpty == false,
             sidebarShowsWorkspaceTree: activeStore?.sidebarMode == .tree,
             sidebarShowsFlaggedOnly: activeStore?.sidebarMode == .flagged,
@@ -177,10 +177,13 @@ extension AppActions {
             })
         }
         // skip the session's OWN workspace, not `currentWorkspaceID` — a freshly created workspace is
-        // current while the selection still sits elsewhere, and it is a valid destination.
+        // current while the selection still sits elsewhere, and it is a valid destination. "Move Session
+        // to …" also bridges NORMAL workspaces only: `AppStore.moveSession` refuses both directions across
+        // an ephemeral (tmux mirror) boundary, so offering them would be a silent no-op — like the sidebar
+        // row's "Move to" submenu, skip the items for an ephemeral source and exclude ephemeral targets.
         if let store, let sessionID = store.selectedSessionID,
-           let owner = store.workspace(forSession: sessionID)?.id {
-            for workspace in store.workspaces where workspace.id != owner {
+           let owner = store.workspace(forSession: sessionID), !owner.ephemeral {
+            for workspace in store.workspaces where workspace.id != owner.id && !workspace.ephemeral {
                 let target = workspace.id
                 items.append(PaletteItem(id: "move-\(target)", title: "Move Session to \(workspace.name)") { [weak self] in
                     self?.moveSession(sessionID, toWorkspace: target)

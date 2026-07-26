@@ -5,6 +5,10 @@ import agtermCore
 /// theme, quick terminal) are in `ControlServer+AppCommands.swift`, split for the swiftlint size limit.
 /// Target-dependent parsing stays here; dispatcher-routed ones parse in agtermCore, keeping response order.
 extension ControlServer: ControlActions {
+    /// Reported by every `session.move` form — singular, batch-to-workspace, and batch place — when the
+    /// move would cross an ephemeral (tmux mirror) boundary, so the three cannot word it differently.
+    static let tmuxMirrorMoveError = "cannot move a session into or out of a tmux mirror"
+
     func typeSession(_ target: String?, window: String?, options: ControlSessionTypeOptions) async -> ControlResponse {
         // resolve first (cross-window without `args.window`), then realize-and-inject: the async
         // bounded-poll realize rules out the synchronous `resolveSession`. Error strings must match `resolve(...)`.
@@ -204,28 +208,41 @@ extension ControlServer: ControlActions {
 
     func closeSession(_ target: String?, window: String?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
-            store.closeSession(id)
+            // backend-aware: a tmux session routes to kill-window (torn down by the %window-close echo).
+            if !actions.closeTmuxSession(id) { store.closeSession(id) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
 
     func closeSessions(_ targets: [String], window: String?) -> ControlResponse {
         resolveBatchSessions(targets, window: window) { store, ids in
+            guard !ids.isEmpty else {
+                return ControlResponse(ok: false, error: "session.close requires at least one --target")
+            }
+            // Backend-aware, exactly like the singular `session.close` arm: a tmux-backed member routes to
+            // `kill-window` and is torn down by the `%window-close` echo, so it must not also close locally
+            // and cannot join the grace-undo group. It counts as closed the moment the kill is sent — the
+            // teardown is the echo's job. Without this the batch form silently left mirrored windows alive
+            // on the remote while the singular form killed them, and a ONE-element `targets` array (which
+            // the docs call equivalent to the singular form) diverged from it too.
+            var local: [UUID] = []
+            var affected = 0
+            for id in ids {
+                if actions.closeTmuxSession(id) { affected += 1 } else { local.append(id) }
+            }
             guard ids.count > 1 else {
-                guard let id = ids.first else { return ControlResponse(ok: false, error: "session.close requires at least one --target") }
-                store.closeSession(id)
+                let id = ids[0]
+                if !local.isEmpty { store.closeSession(id) }
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
-            let affected: Int
             if settingsModel.settings.closeGraceUndoEnabled ?? true {
                 // one grouped grace record is the batch behavior scripts cannot reproduce by looping.
-                affected = store.softCloseSessions(ids) ? ids.count : 0
+                if !local.isEmpty, store.softCloseSessions(local) { affected += local.count }
             } else {
                 // match the GUI's immediate batch-close path when grace undo is disabled.
-                affected = ids.reduce(into: 0) { count, id in
-                    guard store.session(withID: id) != nil else { return }
+                for id in local where store.session(withID: id) != nil {
                     store.closeSession(id)
-                    count += 1
+                    affected += 1
                 }
             }
             // `ok` with the count (0 included) mirrors `placeSessions` — every id resolved, so no error arm.
@@ -235,7 +252,8 @@ extension ControlServer: ControlActions {
 
     func renameSession(_ target: String?, window: String?, name: String) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
-            store.renameSession(id, to: name)
+            // backend-aware: a tmux session routes to rename-window (name follows via %window-renamed).
+            if !actions.renameTmuxSession(id, to: name) { store.renameSession(id, to: name) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }
@@ -518,7 +536,11 @@ extension ControlServer: ControlActions {
             return resolver.resolveSession(target, window: window) { store, sessionID in
                 resolver.resolve(workspace, candidates: store.workspaces.map(\.id),
                         active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
-                    store.moveSession(sessionID, toWorkspace: workspaceID)
+                    // `moveSession` REFUSES a cross-ephemeral (tmux mirror) boundary — report it rather than
+                    // a silent `ok`. Both ids are already resolved here, so a false return means that refusal.
+                    guard store.moveSession(sessionID, toWorkspace: workspaceID) else {
+                        return ControlResponse(ok: false, error: Self.tmuxMirrorMoveError)
+                    }
                     return ControlResponse(ok: true, result: ControlResult(id: sessionID.uuidString))
                 }
             }
@@ -535,6 +557,12 @@ extension ControlServer: ControlActions {
             return resolveBatchSessions(targets, window: window) { store, ids in
                 resolver.resolve(workspace, candidates: store.workspaces.map(\.id),
                         active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
+                    // The batch twin of the singular arm's refusal: `moveSessions` guards the boundary
+                    // too, but it can only answer `affected: 0`, which is indistinguishable from a batch
+                    // whose members were already in the destination.
+                    guard !store.moveCrossesEphemeralBoundary(ids, toWorkspace: workspaceID) else {
+                        return ControlResponse(ok: false, error: Self.tmuxMirrorMoveError)
+                    }
                     let affected = store.moveSessions(ids, toWorkspace: workspaceID)
                     return ControlResponse(ok: true, result: ControlResult(affected: affected))
                 }
@@ -584,6 +612,11 @@ extension ControlServer: ControlActions {
                     target: target,
                     childIndex: after ? SidebarDrop.onItemIndex : anchorLoc.index
                 ) {
+                    // The anchor names the destination workspace, so a place can cross a tmux-mirror
+                    // boundary exactly like a workspace move — refuse it with the same message.
+                    guard !store.moveCrossesEphemeralBoundary(ids, toWorkspace: resolution.workspace) else {
+                        return ControlResponse(ok: false, error: Self.tmuxMirrorMoveError)
+                    }
                     affected = store.moveSessions(ids, toWorkspace: resolution.workspace,
                                                   at: resolution.destination)
                 } else {

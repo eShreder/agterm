@@ -91,7 +91,8 @@ struct agtermApp: App {
                     library: library,
                     makeSurface: {
                         Self.makeSurface(for: $0, store: $1,
-                                         env: surfaceEnv(for: $0, pane: .left), library: library)
+                                         env: surfaceEnv(for: $0, pane: .left), library: library,
+                                         actions: actions)
                     },
                     makeSplitSurface: {
                         Self.makeSplitSurface(for: $0, store: $1,
@@ -178,6 +179,12 @@ struct agtermApp: App {
                         if !library.hasReopened, GhosttyApp.shared.lastConfigDiagnosticsCount > 0 {
                             NotificationManager.shared.notifyConfigDiagnostics(count: GhosttyApp.shared.lastConfigDiagnosticsCount)
                         }
+                        // DEV-ONLY: attach to a LOCAL tmux -CC (no ssh) behind AGTERM_TMUX_LOCAL=1 so the
+                        // relay path can be exercised deterministically against a local tmux. Launch window
+                        // only (`hasReopened` still false here, like the diagnostics banners above).
+                        if !library.hasReopened, ProcessInfo.processInfo.environment["AGTERM_TMUX_LOCAL"] == "1" {
+                            actions.attachLocal(sessionName: "agtgate")
+                        }
                         // runs once via the library latch — the .task fires per window.
                         reopenWindows()
                         appDelegate.scheduleRestoredWindowReconciliation(reason: "scene-task")
@@ -225,7 +232,7 @@ struct agtermApp: App {
     /// directory. On shell exit the view calls back to close the owning session in the store.
     @MainActor
     private static func makeSurface(for session: Session, store: AppStore, env: [String: String],
-                                    library: WindowLibrary) -> GhosttySurfaceView {
+                                    library: WindowLibrary, actions: AppActions) -> GhosttySurfaceView {
         // `initialCommand` (`session.new --command`) replaces the login shell and closes the session on its exit
         // (like kitty); it is the durable creation identity, re-emitted by every `snapshot()`. `foregroundCommand`,
         // a distinct child captured at quit, is consumed run-once; an exec-replacing command has a nil libghostty
@@ -250,6 +257,10 @@ struct agtermApp: App {
         let sessionID = session.id
         view.onExit = { [weak view] in
             guard let view else { return }
+            // a tmux relay child that died on its own (crash, external kill) leaves its tmux window
+            // mirrored nowhere; unmirror it in the owning controller so `tmux.list` and `tmux:`
+            // addressing stay truthful. No-op for plain local sessions and controller-driven closes.
+            actions.tmuxRelayChildExited(sessionID)
             Self.handlePaneExit(view, store: store, sessionID: sessionID, library: library)
         }
         view.onFocusChange = { focused in
