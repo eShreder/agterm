@@ -10,19 +10,24 @@ public struct Workspace: Identifiable {
     /// Whether the sidebar row is expanded (its session rows shown). Defaults true so a freshly created
     /// workspace opens; persisted per workspace so the collapse state survives a relaunch.
     public var isExpanded: Bool
+    /// Whether this workspace is an ephemeral mirror (e.g. a tmux `-CC` host workspace) that must
+    /// never land in `workspaces.json`. `AppStore.snapshot()` filters these out before persisting.
+    public var ephemeral: Bool = false
 
-    public init(name: String, sessions: [Session] = [], isExpanded: Bool = true) {
+    public init(name: String, sessions: [Session] = [], isExpanded: Bool = true, ephemeral: Bool = false) {
         id = UUID()
         self.name = name
         self.sessions = sessions
         self.isExpanded = isExpanded
+        self.ephemeral = ephemeral
     }
 
-    public init(id: UUID, name: String, sessions: [Session] = [], isExpanded: Bool = true) {
+    public init(id: UUID, name: String, sessions: [Session] = [], isExpanded: Bool = true, ephemeral: Bool = false) {
         self.id = id
         self.name = name
         self.sessions = sessions
         self.isExpanded = isExpanded
+        self.ephemeral = ephemeral
     }
 
     /// Total unseen-notification count across this workspace's sessions, for the badge on a

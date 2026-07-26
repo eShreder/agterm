@@ -94,6 +94,10 @@ public enum Command: String, Codable, Sendable {
     case zmxKill = "zmx.kill"
     case zmxTree = "zmx.tree"
     case zmxAttach = "zmx.attach"
+    case tmuxAttach = "tmux.attach"
+    case tmuxDetach = "tmux.detach"
+    case tmuxList = "tmux.list"
+    case tmuxKill = "tmux.kill"
     /// UI-TEST-ONLY: forces the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
     /// simulate a macOS light/dark flip; with NO name it READS the side the last config feed applied, so a
     /// test can assert the flip drove the reload. Refused outside an XCUITest launch, and EXEMPT from the
@@ -118,6 +122,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var workspace: String?
     /// Target workspace BY NAME for `session.new` (mutually exclusive with `workspace`). Reuses the first
     /// workspace with this exact name; an absent name is an error unless `createWorkspace` is set.
+    /// ALSO the optional label of the mirror workspace `tmux.attach` CREATES (default
+    /// `tmux: <host>/<session>`) — a name, never an address, which is why it does not ride `workspace`.
     public var workspaceName: String?
     /// For `session.new` with `workspaceName`: create the named workspace when none exists (idempotent
     /// reuse-or-create). An error without `workspaceName` — there is nothing to create by id.
@@ -134,7 +140,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// `zmx kill`'s explicit confirmation. The command destroys a backend process that can reach detached
     /// claims and every client attached to it, so it has no useful default for who is affected.
     public var force: Bool?
-    /// The machine `zmx tree` reaches, spelled as ssh would take it.
+    /// The machine `zmx tree` reaches, and the one `tmux.attach` opens its `-CC` session on (required
+    /// there), spelled as ssh would take it.
     public var host: String?
     /// For `session.new`: create in the background without selecting or focusing (the CLI's `--no-select`);
     /// omitted/`false` keeps select-and-focus. Read back via the `tree` `active` flag — the new node is not it.
@@ -521,6 +528,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var zmx: ControlZmxInventory?
     /// Another machine's attachable sessions, for `zmx tree`.
     public var remote: ControlRemoteTree?
+    /// The live tmux `-CC` connections for `tmux.list`.
+    public var tmuxConnections: [ControlTmuxNode]?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
@@ -532,7 +541,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 pick: ControlPickResult? = nil, ask: ControlAskResult? = nil, cursor: ControlCursor? = nil,
                 app: AppIdentity? = nil, restore: ControlRestoreStatus? = nil,
                 zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil,
-                width: Int? = nil, height: Int? = nil) {
+                width: Int? = nil, height: Int? = nil,
+                tmuxConnections: [ControlTmuxNode]? = nil) {
         self.width = width
         self.height = height
         self.restore = restore
@@ -559,6 +569,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.ask = ask
         self.cursor = cursor
         self.app = app
+        self.tmuxConnections = tmuxConnections
     }
 }
 
