@@ -11,6 +11,9 @@ final class AppActions {
     /// so menu bar / palette / control channel all drive the window the user is looking at.
     let library: WindowLibrary
 
+    // the live tmux connections, driven by AppActions+Tmux.swift (a stored property can't sit in an extension)
+    var tmuxControllers: [TmuxController] = []
+
     /// The frontmost open window's store, the target of every mutating action. Nil only with all windows
     /// closed (quitting), where callers no-op.
     var store: AppStore? { library.activeStore }
@@ -115,6 +118,7 @@ final class AppActions {
 
     func newSession() {
         guard uiActionsEnabled else { return }
+        if newTmuxWindowForActiveSession() { return } // tmux-backed: ⌘T adds a tmux WINDOW (AppActions+Tmux)
         guard let store, let workspaceID = store.currentWorkspaceID,
               let session = store.addSession(toWorkspace: workspaceID, cwd: resolvedNewSessionCwd())
         else { return }
@@ -333,6 +337,7 @@ final class AppActions {
     }
 
     private func closeSessionAfterConfirmation(_ id: UUID, in store: AppStore) {
+        if closeTmuxSession(id) { return } // a tmux-backed session routes to kill-window (AppActions+Tmux)
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {
                 _ = store.softCloseSession(id)
@@ -469,14 +474,16 @@ final class AppActions {
     }
 
     /// Delete a workspace and all its sessions from `store`'s window. Confirms while it still has sessions
-    /// (the delete ends their shells), no prompt when empty, no-op when only one workspace remains — one is
-    /// always kept. The row's "Delete Workspace" passes its OWN window-local store: the frontmost one would
-    /// find no such id and silently do nothing. Ungated like the other store-scoped row actions — a window
-    /// renders no sidebar while its zoom or dashboard is up, so the row menu is unreachable in exactly the
-    /// state the gate covers, and a frontmost modal must not block a background window's row.
+    /// (the delete ends their shells), no prompt when empty, no-op when only one PERSISTENT workspace
+    /// remains — one is always kept, while an ephemeral tmux mirror stays removable. The row's "Delete
+    /// Workspace" passes its OWN window-local store: the frontmost one would find no such id and silently
+    /// do nothing. Ungated like the other store-scoped row actions — a window renders no sidebar while its
+    /// zoom or dashboard is up, so the row menu is unreachable in exactly the state the gate covers, and a
+    /// frontmost modal must not block a background window's row.
     func deleteWorkspace(_ workspaceID: UUID, in store: AppStore) {
-        guard store.canRemoveWorkspace,
+        guard store.canRemoveWorkspace(workspaceID),
               let workspace = store.workspaces.first(where: { $0.id == workspaceID }) else { return }
+        if deleteTmuxMirror(workspace, in: store) { return } // a tmux mirror detaches instead (AppActions+Tmux)
         if !workspace.sessions.isEmpty, !confirmDeleteWorkspace(workspace) { return }
         if closeGraceUndoEnabled {
             withAnimation(.easeInOut(duration: 0.16)) {
@@ -519,65 +526,6 @@ final class AppActions {
     func moveSession(_ sessionID: UUID, toWorkspace workspaceID: UUID) {
         guard uiActionsEnabled else { return }
         store?.moveSession(sessionID, toWorkspace: workspaceID)
-    }
-
-    // MARK: - Sidebar tree expansion
-
-    /// Expand every workspace in the frontmost window's sidebar. No-op when no window is open.
-    func expandAllWorkspaces() {
-        guard uiActionsEnabled else { return }
-        guard let store else { return }
-        expandAllWorkspaces(in: store)
-    }
-
-    /// Expand every workspace in `store`'s window sidebar. The sidebar owns the outline, so this posts a
-    /// store-scoped notification and only that window's `WorkspaceSidebar.Coordinator` acts — how
-    /// `sidebar.expand` targets a specific (default frontmost) window. No-op in flagged mode (no rows).
-    func expandAllWorkspaces(in store: AppStore) {
-        NotificationCenter.default.post(name: .agtermExpandWorkspaces, object: store)
-    }
-
-    /// Collapse every workspace except the active one in the frontmost window's sidebar. No-op with no window.
-    func collapseOtherWorkspaces() {
-        guard uiActionsEnabled else { return }
-        guard let store else { return }
-        collapseOtherWorkspaces(in: store)
-    }
-
-    /// Collapse every workspace except the current one in `store`'s window sidebar, keeping that one
-    /// expanded and scrolled into view. Store-scoped like `expandAllWorkspaces(in:)`, no-op in flagged mode,
-    /// and how `sidebar.collapse` targets a specific (default frontmost) window.
-    func collapseOtherWorkspaces(in store: AppStore) {
-        NotificationCenter.default.post(name: .agtermCollapseWorkspaces, object: store)
-    }
-
-    /// Fold or unfold the CURRENT workspace alone, for the keyless `toggle_workspace_collapse`, its View-menu
-    /// item and its palette row. The per-workspace counterpart of Expand / Collapse Workspaces, which act on
-    /// every row and deliberately keep this one open — so before this there was no built-in way to fold the
-    /// workspace you are in. Tree mode only, matching those two and the rows it acts on. Targets what the row
-    /// SHOWS (`isCurrentWorkspaceCollapsed`), not what is persisted: a reveal routinely leaves this workspace
-    /// open on screen while its stored flag still says collapsed, and toggling the stored flag there costs the
-    /// user a keystroke that changes nothing he can see.
-    func toggleActiveWorkspaceCollapse() {
-        guard uiActionsEnabled else { return }
-        guard let store, store.sidebarMode == .tree, let id = store.currentWorkspaceID else { return }
-        setWorkspaceExpanded(id, expanded: store.isCurrentWorkspaceCollapsed, in: store)
-    }
-
-    /// Collapse/expand a SINGLE workspace in `store`'s window sidebar — the shared path for
-    /// `workspace.collapse`/`.expand` and for `toggleActiveWorkspaceCollapse` above (a GUI row click drives
-    /// the outline directly instead). Persists
-    /// `Workspace.isExpanded` DIRECTLY on the store (source of truth for the `collapsed` read-back,
-    /// delta-guarded so it's idempotent), THEN posts a store-scoped notification so that window's Coordinator
-    /// syncs the live outline row and its tracked expansion set. The persist must NOT ride the notification:
-    /// the Coordinator is mounted only while `sidebarVisible`, so with the sidebar hidden a notification-only
-    /// write drops silently and leaves the read-back stale. Mirrors `workspace.focus`/`session.resize`.
-    func setWorkspaceExpanded(_ id: UUID, expanded: Bool, in store: AppStore) {
-        store.setWorkspaceExpanded(id, expanded: expanded)
-        NotificationCenter.default.post(
-            name: .agtermSetWorkspaceExpanded, object: store,
-            userInfo: [WorkspaceSidebar.Coordinator.workspaceIDUserInfoKey: id,
-                       WorkspaceSidebar.Coordinator.expandedUserInfoKey: expanded])
     }
 
     // MARK: - Flagged working-set

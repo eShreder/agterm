@@ -10,6 +10,7 @@ import agtermCore
 final class WindowContentViewTitlebarTests: XCTestCase {
     private var stateDir: URL!
     private var library: WindowLibrary!
+    private var actions: AppActions!
     private var window: NSWindow!
 
     override func setUp() async throws {
@@ -18,6 +19,7 @@ final class WindowContentViewTitlebarTests: XCTestCase {
             stateDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("agterm-titlebar-tests-\(UUID().uuidString)", isDirectory: true)
             library = WindowLibrary(directory: stateDir)
+            actions = AppActions(library: library)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
             // over-releases a window the registry may still hold, crashing the host at autorelease-pool pop
@@ -29,6 +31,7 @@ final class WindowContentViewTitlebarTests: XCTestCase {
         await MainActor.run {
             window?.close()
             window = nil
+            actions = nil
             library = nil
             try? FileManager.default.removeItem(at: stateDir)
             stateDir = nil
@@ -41,7 +44,8 @@ final class WindowContentViewTitlebarTests: XCTestCase {
         let store = try XCTUnwrap(library.activeStore)
         let session = try XCTUnwrap(store.activeSession)
         window.contentView = NSHostingView(rootView: WindowTitleSync(store: store, library: library,
-                                                                    windowID: windowID, captureOnExit: nil))
+                                                                    windowID: windowID, captureOnExit: nil,
+                                                                    actions: actions))
         window.layoutIfNeeded()
         try waitForTitle(session.displayName)
 

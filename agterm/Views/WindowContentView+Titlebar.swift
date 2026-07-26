@@ -17,7 +17,8 @@ extension WindowContentView {
 
     /// Feeds the OS window title to `WindowAccessor` from its own body, for the same reason as `titleLabel`.
     var windowTitleSync: WindowTitleSync {
-        WindowTitleSync(store: store, library: library, windowID: windowID, captureOnExit: captureOnExit)
+        WindowTitleSync(store: store, library: library, windowID: windowID, captureOnExit: captureOnExit,
+                        actions: actions)
     }
 
     /// The window chrome above the terminal: the full custom titlebar row, or in hidden mode an invisible ~3px
@@ -204,10 +205,11 @@ struct WindowTitleSync: View {
     let library: WindowLibrary
     let windowID: WindowInfo.ID
     let captureOnExit: AppDelegate.ExitCapture?
+    let actions: AppActions
 
     var body: some View {
         WindowAccessor(titleToken: title, windowID: windowID, library: library, store: store,
-                       captureOnExit: captureOnExit)
+                       captureOnExit: captureOnExit, actions: actions)
     }
 
     private var title: String {

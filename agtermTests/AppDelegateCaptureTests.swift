@@ -156,7 +156,7 @@ final class AppDelegateCaptureTests: XCTestCase {
             captureOnExit: { sessions in
                 sessions.first?.foregroundCommand = ["worker", "--live"]
                 return 1
-            })
+            }, actions: AppActions(library: library))
 
         window.close()
 
@@ -265,7 +265,8 @@ final class AppDelegateCaptureTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = WindowAccessor.TitleProbeView(
             windowID: windowID, library: library, store: store,
-            captureOnExit: AppDelegate.makeExitCapture(settingsModel: settings, zmxResolver: nil))
+            captureOnExit: AppDelegate.makeExitCapture(settingsModel: settings, zmxResolver: nil),
+            actions: AppActions(library: library))
 
         window.close()
 

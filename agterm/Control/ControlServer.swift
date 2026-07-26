@@ -158,7 +158,8 @@ final class ControlServer {
         self.zmxForegroundResolver = zmxForegroundResolver
         self.zmxClient = zmxClient
         self.identity = identity
-        self.resolver = ControlTargetResolver(library: library)
+        self.resolver = ControlTargetResolver(library: library,
+                                              tmuxLookup: { actions.tmuxSession(forTarget: $0) })
         self.socketPath = socketPath ?? ControlServer.defaultSocketPath()
         AskRegistry.shared.resolveOwner = { [weak library] owner in
             switch owner {
@@ -511,6 +512,34 @@ final class ControlServer {
                 .restoreClear, .restoreCapture, .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree,
                 .zmxAttach, .dashboard, .version:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
+        case .tmuxAttach:
+            guard let host = request.args?.host else {
+                return ControlResponse(ok: false, error: "tmux.attach requires a host")
+            }
+            // `attachTmux` returns a discriminated outcome so each failure reports its OWN error — a
+            // spawn failure (e.g. PTY/fd exhaustion) must not read as the unrelated "no open window".
+            // `.attached` echoes the connection id (new or dedup-focused) per the mutating-command
+            // convention, so a script can attach → detach/kill without scraping `tmux.list`.
+            // The optional mirror label rides `args.workspaceName` (a NAME), never `args.workspace`
+            // (the id/prefix/`active` address every other command resolves) — attach CREATES its
+            // workspace, so there is no existing one to address.
+            switch actions.attachTmux(host: host, sessionName: request.args?.name ?? "main",
+                                      workspaceName: request.args?.workspaceName) {
+            case .attached(let id):
+                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+            case .invalidHost:
+                return ControlResponse(ok: false, error: "invalid ssh host")
+            case .noWindow:
+                return ControlResponse(ok: false, error: "no open window")
+            case .spawnFailed:
+                return ControlResponse(ok: false, error: "tmux attach failed to spawn ssh")
+            }
+        case .tmuxDetach:
+            return tmuxResponse(actions.detachTmux(connectionID: request.target))
+        case .tmuxKill:
+            return tmuxResponse(actions.killTmux(connectionID: request.target))
+        case .tmuxList:
+            return ControlResponse(ok: true, result: ControlResult(tmuxConnections: actions.listTmux()))
         case .debugAppearance:
             return setDebugAppearance(args: request.args)
         case .pickOpen, .pickResult, .pickCancel:
@@ -774,8 +803,24 @@ final class ControlServer {
                 case .untouched: return "untouched"
                 }
             },
-            app: identity
+            app: identity,
+            tmuxIdentity: { session in
+                actions.tmuxIdentity(forSession: session.id)
+            }
         )
+    }
+
+    /// Map a `tmux.detach`/`tmux.kill` selection outcome to a response: `.ok` echoes the matched
+    /// connection id in `result.id` per the mutating-command convention (the no-id single-connection
+    /// form is where the caller learns which connection was acted on); `.ambiguous` (a bare command with
+    /// more than one live connection) reports that the caller must name the id, rather than silently
+    /// acting on an arbitrary connection.
+    private func tmuxResponse(_ selection: TmuxSelection) -> ControlResponse {
+        switch selection {
+        case .ok(let id): return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        case .notFound: return ControlResponse(ok: false, error: "tmux connection not found")
+        case .ambiguous: return ControlResponse(ok: false, error: "multiple tmux connections; specify an id")
+        }
     }
 
     /// Creates a session in `workspaceID` of `store` with the `session.new` args (cwd default $HOME, optional
@@ -786,6 +831,11 @@ final class ControlServer {
     /// background, selection and focus untouched.
     func makeSessionResponse(in store: AppStore, workspaceID: UUID,
                              options: ControlSessionCreateOptions, at index: Int? = nil) -> ControlResponse {
+        // a tmux mirror workspace hosts only its controller's tmux windows; a plain session there would be
+        // killed on detach, so reject it up front with a clear error rather than the generic add failure.
+        if store.workspaces.first(where: { $0.id == workspaceID })?.ephemeral == true {
+            return ControlResponse(ok: false, error: "cannot add a session to a tmux mirror workspace")
+        }
         let cwd = options.cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
         guard let session = store.addSession(toWorkspace: workspaceID, cwd: cwd,
                                              command: options.command, name: options.name,
