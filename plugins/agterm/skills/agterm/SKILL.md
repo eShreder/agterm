@@ -9,7 +9,9 @@ description: >
   display the native fuzzy picker with caller-supplied choices and poll or cancel it; display
   an image inline via a bundled helper script; type
   into a session, copy its selection, or search its scrollback; post desktop notifications; manage windows (new, list,
-  select, close, resize, move); change font size; or reload and edit the keymap and the agterm-scoped
+  select, close, resize, move); attach to remote tmux -CC sessions so each tmux window becomes a
+  native session (attach, detach, list, kill, and tmux:-prefixed pane/window addressing); change font
+  size; or reload and edit the keymap and the agterm-scoped
   ghostty config. Also covers the
   window/workspace/session addressing model and the AGTERM_* environment a spawned shell sees, plus
   subscribe to status, notification, session lifecycle, and tree-change events; diagnose problems
@@ -22,6 +24,8 @@ when_to_use: >
   session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.go, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, window.minimize, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, keymap.list, config.reload,
   theme.set, theme.list, events, events.read, event subscription, select theme, edit keymap, show an image, display an image inline, show-image,
+  tmux.attach, tmux.detach, tmux.list, tmux.kill, tmux attach, attach tmux session, tmux -CC,
+  tmux: target, TMUX_PANE, AGTERM_CONTROL_SOCKET,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
   keymap editor won't open, custom action / custom command not working, agterm logs, file an agterm
   bug, report an agterm issue, open an agterm discussion / feature request.
@@ -121,6 +125,9 @@ Commands that target a session or workspace take `--target` (default `active`):
 - `active` — the selected session / current workspace.
 - a full UUID (case-insensitive), or a unique **prefix** of one (git-style). Zero matches → `notFound`
   error; two or more → `ambiguous` error listing candidates.
+- `tmux:%<pane>` / `tmux:@<window>` — sugar for a session mirrored from a native tmux attach, e.g.
+  `--target "tmux:$TMUX_PANE"` when you have a tmux pane id in hand. See **reference.md** for the
+  recipe and its leading-pane-only limitation.
 
 `window.*` commands take the window id/prefix/`active` as a positional argument. Other commands accept
 a global `--window <id|prefix|active>` to operate on a specific window's tree (default: the frontmost).
@@ -197,8 +204,10 @@ session that has a split — shown or hidden; omitted when there's no split or t
 the default 0.5) —
 the read side of `session resize`, record it to restore the exact divider), `splitFocused`
 (which pane holds focus in a session that has a split: `true` = split/right/bottom, `false` = primary/left/top; omitted
-when there's no split; the read side of `session focus`, record it to restore focus), and `surfaces`
-(`id`, `kind`, `active`, `visible`) for `surface zoom` and `surface cursor`. The tree top level carries `zoomedSurface`
+when there's no split; the read side of `session focus`, record it to restore focus), `surfaces`
+(`id`, `kind`, `active`, `visible`) for `surface zoom` and `surface cursor`, and `tmuxWindow`/`tmuxPane` (the
+mirrored tmux window/leading-pane ids for a `tmux:`-backed session, omitted for a local one). The tree top
+level carries `zoomedSurface`
 (the control id of the currently zoomed surface, omitted when nothing is zoomed — the read side of
 `surface zoom`, so a script can check the zoom state and record-then-restore). It also carries the read
 side of the `dashboard` command (all omitted when no dashboard is open): `dashboardMembers` (the pane refs
@@ -263,7 +272,10 @@ omitted when expanded).
   source node's `tree.cwd` unless the source is a split focused off its primary pane, where `tree.cwd`
   reports the primary).
 - `close [--target T ...]` — close one session, or repeat `--target` to close a batch with one
-  grace-period undo.
+  grace-period undo. **Backend-aware:** on a tmux-backed session (one mirrored from a `tmux -CC`
+  window), `close` routes to `kill-window` and `rename` to `rename-window` — so they round-trip to
+  the remote tmux, not just locally. (Opening a new tmux window is GUI-only: New Session ⌘T on a tmux
+  session; control `session new` always creates a local session.)
 - `select` · `rename <name>` · `reveal` (select the focused pane's cwd in Finder).
 - `go --to next|prev|first|last|next-attention|prev-attention` — move the selection between sessions.
 - `move <workspace>` (relocate) or `move --to up|down|top|bottom` (reorder within the workspace) or
@@ -483,6 +495,21 @@ appearance automatically; `theme set --dark none` stops tracking. The app defaul
 
 **restore** — `restore clear` — clear every session's saved foreground command (the
 restore-running-command capture) so the next restart restores plain shells.
+
+**tmux** — native `tmux -CC` sessions: each remote tmux window becomes a native agterm session (backed
+by a normal local terminal relaying to tmux — no engine fork, so search/notifications work).
+- `tmux attach <host> [--session NAME] [--workspace-name NAME]` — ssh to `<host>`, attach-or-create the tmux
+  session (`-CC`), and mirror its windows into a `tmux: host/session` workspace. Prints the connection
+  id (also on a repeat attach, which just focuses the existing connection).
+- `tmux list` — active connections: `<id>  <host>/<session>  [window names]` (the id is the tmux
+  workspace uuid).
+- `tmux detach [id]` — soft detach (tmux keeps running server-side); omit id for the only connection.
+- `tmux kill [id]` — hard remote `kill-session`. The id accepts a unique prefix (git-style,
+  case-insensitive) like every other target. v1 shows only a split window's leading pane.
+
+Sizing is per-connection: a mirrored surface's resize becomes `refresh-client -C`, which sizes the whole
+tmux client, so resizing one mirrored session (notably `session split` on it) reflows every window of
+that connection.
 
 ## Displaying an image inline
 

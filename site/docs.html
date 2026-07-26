@@ -191,6 +191,7 @@
             <a href="#terminals" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Terminals</a>
             <a href="#navigation" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Navigation</a>
             <a href="#windows" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Windows</a>
+            <a href="#tmux" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">tmux sessions</a>
             <a href="#notifications" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Notifications</a>
             <a href="#accessibility" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Accessibility</a>
             <a href="#settings" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Customization</a>
@@ -328,6 +329,18 @@
                 </div>
                 <p style="font-size: 13.5px; color: #949ba4; margin: 0; line-height: 1.55">
                   An installable skill teaches Claude Code or Codex to drive agterm through agtermctl.
+                </p>
+              </div>
+              <div
+                style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px"
+              >
+                <div
+                  style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13px; color: #7ece8f; margin-bottom: 6px"
+                >
+                  tmux sessions
+                </div>
+                <p style="font-size: 13.5px; color: #949ba4; margin: 0; line-height: 1.55">
+                  Attach a remote tmux -CC session; each tmux window becomes a native session.
                 </p>
               </div>
               <div
@@ -1051,6 +1064,69 @@
             </p>
           </section>
 
+          <!-- TMUX -->
+          <section id="tmux" style="scroll-margin-top: 88px; padding-top: 56px">
+            <h2
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 700;
+                font-size: 28px;
+                letter-spacing: -0.02em;
+                margin: 0 0 16px;
+                padding-bottom: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+              "
+            >
+              tmux sessions
+            </h2>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              Attach to a remote <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #e6e1d7">tmux -CC</span>
+              session over ssh — <strong style="color: #e6e1d7">File ▸ Attach tmux Session…</strong>, or
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl tmux attach</span> — and each
+              tmux window becomes a native agterm session in its own workspace: rendered by the local engine, searchable, and
+              notifying like any other session.
+            </p>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              The mirror is live, not a restore. Closing a mirrored session runs
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">kill-window</span> on the remote and
+              renaming one runs <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">rename-window</span>;
+              detaching leaves tmux running server-side to reattach later. The mirror workspace is not saved across launches — you
+              reattach it. Two v1 limits: a tmux window that is itself split shows only its leading pane, and sizing is
+              per-connection rather than per-window — resizing one mirrored session (splitting it, for instance) reflows every
+              window of that connection.
+            </p>
+            <div
+              style="
+                background: #15191c;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                padding: 18px 20px;
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-size: 13.5px;
+                line-height: 1.95;
+                overflow-x: auto;
+                color: #e6e1d7;
+              "
+            >
+              agtermctl tmux attach user@host --session dev
+              <span style="color: #6b727a">&nbsp;# each tmux window becomes a session</span><br />agtermctl tmux list
+              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;# id  host/session  [window names]</span><br />agtermctl tmux
+              detach <span style="color: #f2b45c">&lt;id&gt;</span>
+              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;# tmux keeps running server-side</span><br />agtermctl tmux kill
+              <span style="color: #f2b45c">&lt;id&gt;</span>
+              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# remote kill-session</span>
+            </div>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 16px 0 0">
+              The <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">&lt;id&gt;</span> for
+              detach/kill is the mirror-workspace id from
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tmux list</span> (a unique prefix
+              works); omit it when only one connection is live. A mirrored session can also be addressed by its tmux ids —
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--target "tmux:$TMUX_PANE"</span> or
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tmux:@&lt;window&gt;</span>. Reattaching
+              after an ssh drop is manual.
+            </p>
+          </section>
+
           <!-- NOTIFICATIONS -->
           <section id="notifications" style="scroll-margin-top: 88px; padding-top: 56px">
             <h2
@@ -1295,7 +1371,11 @@
               number of sessions actually changed. Add
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--json</span> for the raw response,
               or <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--socket PATH</span> to override
-              the socket. The exit code is zero on success, non-zero on error.
+              the socket — <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl</span> also
+              honors <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">AGTERM_CONTROL_SOCKET</span> as
+              its default socket (precedence: <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--socket</span>,
+              then the env var, then the standard location), so a shell that already knows where the socket lives can export it once
+              instead of passing the flag on every call. The exit code is zero on success, non-zero on error.
             </p>
 
             <h3
@@ -2730,7 +2810,11 @@ command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' stop"
                 <span
                   style="position: absolute; left: 0; top: 2px; color: #6d82f3; font-family: &quot;JetBrains Mono&quot;, monospace"
                   >›</span
-                ><strong style="color: #e6e1d7">Live processes are not reattached.</strong> By default a restored session
+                ><strong style="color: #e6e1d7">Live processes are not reattached automatically.</strong> Automatic process
+                survival would need a persistent backend, which restore does not provide — for genuine survival, run the work
+                under tmux on a host and reattach it with
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl tmux attach</span>, which
+                is a live mirror rather than a restore. By default a restored session
                 re-spawns a fresh login shell in its saved directory. The optional
                 <strong style="color: #e6e1d7">Restore running commands on restart</strong> toggle (General settings, off by
                 default) re-runs the command each pane had in the foreground at the last clean quit — a re-run, not a reattach.

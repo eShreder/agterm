@@ -17,6 +17,7 @@ What it does:
 - **Splits, scratch, and overlays.** Split a session into two shells side by side or top and bottom, open a scratch terminal over it, or run a program in a full or floating overlay without disturbing the shell underneath.
 - **Agent skill.** An installable skill (Help ▸ Install Agent Skill…) teaches Claude Code or Codex the control model and the `agtermctl` commands, so an agent running inside agterm can build its own layout, run overlays, manage windows, and show images inline without you explaining the API.
 - **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. Status hooks for Claude Code, Codex, Pi, OpenCode, and other agents install from Help ▸ Install Agent Status Hooks….
+- **tmux sessions.** Attach to a remote `tmux -CC` session over ssh (File ▸ Attach tmux Session…, or `agtermctl tmux attach`) and each tmux window becomes a native agterm session — rendered by the local engine, searchable, and notifying like any other. Closing or renaming a mirrored session round-trips to `kill-window` / `rename-window` on the remote.
 
 For the real terminal work, rendering, VT parsing, and shell I/O, `agterm` embeds [Ghostty](https://ghostty.org)'s engine (libghostty); everything above is `agterm`'s own.
 

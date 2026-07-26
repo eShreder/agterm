@@ -226,7 +226,8 @@ spans intact, and format long catalogs as lists.
 - `sidebar.md`: outline, reorder, flagged/focus views, scoped navigation, reconciliation, persistence.
 - `menu-actions.md`: actions, menus, split panes, navigation, palettes, MRU, rename, search.
 - `windows.md`: window library, restoration, quick terminal, active-store resolution, quit, controls.
-- `control-api.md`: protocol layers, catalog, addressing, CLI/hooks/skill installers.
+- `control-api.md`: protocol layers, catalog including `tmux.*`, addressing, CLI/hooks/skill installers,
+  and the tmux relay engine.
 - `settings.md`: settings model/UI, Ghostty config emission, translucency.
 - `theme-picker.md`: preview/commit/cancel and seeded default.
 - `keymap.md`: keymap parser, built-ins, custom commands/tokens, reload/edit.
@@ -236,3 +237,4 @@ spans intact, and format long catalogs as lists.
 - `app-icon.md`: adaptive Icon Composer build.
 - `ci.md`: jobs, filters, coverage, badge.
 - `release.md`: local signing, notarization, release, Homebrew, changelog.
+
