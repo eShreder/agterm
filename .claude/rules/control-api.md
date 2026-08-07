@@ -667,6 +667,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   the mirror.
 - Resize is per CONNECTION, a v1 limit: the relay forwards SIGWINCH as `refresh-client -C`, which sizes
   the tmux CLIENT, so shrinking one mirrored surface reflows every window of that connection.
+- The attach `capture-pane` snapshots wait behind that first `refresh-client -C` (2s fallback if no relay
+  child ever reports a size). The paint is literal rows joined by hard breaks, so a snapshot taken at
+  tmux's pre-attach size bakes that width into the surface permanently — nothing redraws a shell's
+  scrollback and no reflow undoes a hard break. Held `%output` is replayed OVER the paint from the hold's
+  length at the reply's `%begin`; everything before that boundary is already folded into the snapshot.
+  Reply blocks bind to their window at `%begin` for the same reason.
 - A relay child that dies on its own (crash, external kill, not a teardown) is unmirrored through
   `tmuxRelayChildExited`, which drops the mapping/socket and clears `tmuxBinding` so `tmux.list` and
   `tmux:` addressing stay truthful and a split-promoted survivor is not left with a dead binding.

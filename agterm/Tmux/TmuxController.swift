@@ -33,14 +33,23 @@ import agtermCore
     private var blockLines: [Int: [String]] = [:]
     private var initializedWindows = false
     private var pendingCaptureWindows: [TmuxWindowID] = []
+    /// Windows whose initial `capture-pane` is HELD BACK until the client size has been set — see
+    /// `flushDeferredCaptures` for why the snapshot must not be taken at tmux's pre-attach size.
+    private var deferredCaptureWindows: [TmuxWindowID] = []
+    /// Releases the deferred captures when no relay child ever reports a size, so there is always a paint.
+    private var captureFallbackWork: DispatchWorkItem?
+    /// Which window's `capture-pane` a reply block answers, bound at `%begin`. The binding must happen at
+    /// the block's START, not its end: that boundary is also what separates the `%output` already folded
+    /// into the snapshot from the output that postdates it (`snapshotHeldPrefix`).
+    private var captureBlockOwner: [Int: TmuxWindowID] = [:]
     /// True from the handshake `list-windows` send until its reply is processed. Any OTHER command sent
-    /// in that gap (a debounced `refresh-client -C` from a fresh `%window-add`'s relay child, a held-input
-    /// `send-keys` flush, a user ⌘T `new-window`) replies — tmux answers strictly in command order — AFTER
-    /// the `list-windows` reply but BEFORE the `capture-pane`s enqueued while processing it. Without
-    /// accounting, `pendingCaptureWindows` (a pure FIFO) would consume that reply as the first window's
-    /// snapshot and every capture would paint into the WRONG window.
+    /// before the captures go out (a debounced `refresh-client -C` from a fresh `%window-add`'s relay
+    /// child, a held-input `send-keys` flush, a user ⌘T `new-window`, the client resize the captures wait
+    /// behind) replies — tmux answers strictly in command order — BEFORE them. Without accounting,
+    /// `pendingCaptureWindows` (a pure FIFO) would claim that reply as the first window's snapshot and
+    /// every capture would paint into the WRONG window.
     private var awaitingWindowList = false
-    /// How many such gap commands were sent; their replies are consumed (not painted) before the captures.
+    /// How many such earlier commands were sent; their replies are consumed (not painted) before the captures.
     private var preCaptureReplies = 0
     /// Windows whose initial `capture-pane` paint is still pending. Live `%output` for such a window is
     /// BUFFERED in `heldOutput` instead of hitting the surface, so the paint's screen-clear (`\e[2J`) can't
@@ -48,6 +57,9 @@ import agtermCore
     /// so once the clear lands the prompt is gone until a manual redraw (Ctrl-L) — the reported bug.
     private var windowsAwaitingCapture: Set<TmuxWindowID> = []
     private var heldOutput: [TmuxWindowID: [UInt8]] = [:]
+    /// How many held bytes tmux had already folded into the snapshot when it ran (the hold's length at the
+    /// reply's `%begin`). Only the tail past it postdates the capture and must be replayed over the paint.
+    private var snapshotHeldPrefix: [TmuxWindowID: Int] = [:]
     /// Cap on the per-window pre-capture hold, so a capture that never returns can't grow it unbounded.
     private static let maxHeldOutput = 4 * 1024 * 1024
     /// Keystrokes typed into a window whose leading pane is not known yet — a fresh `%window-add`'s pane
@@ -193,38 +205,72 @@ import agtermCore
     /// Encode + send a control command.
     private func sendCommand(_ command: TmuxCommand) {
         gateway?.send(command)
-        // A command sent while the window-list reply is outstanding replies ahead of the capture-panes;
-        // count it so its (empty) reply block isn't consumed as the first window's capture snapshot.
-        if gateway != nil, awaitingWindowList { preCaptureReplies += 1 }
+        // A command sent before the initial capture-panes go out replies ahead of them; count it so its
+        // reply block isn't claimed as the first window's capture snapshot.
+        if gateway != nil, awaitingWindowList || !deferredCaptureWindows.isEmpty { preCaptureReplies += 1 }
+    }
+
+    /// Bind an incoming reply block to the `capture-pane` it answers, or consume one of the earlier
+    /// commands' replies. tmux answers strictly in command order, so the head of `pendingCaptureWindows`
+    /// owns the first block that is not one of the `preCaptureReplies`.
+    private func claimCaptureBlock(_ num: Int) {
+        guard !pendingCaptureWindows.isEmpty else { return }
+        guard preCaptureReplies == 0 else { preCaptureReplies -= 1; return }
+        let window = pendingCaptureWindows.removeFirst()
+        captureBlockOwner[num] = window
+        snapshotHeldPrefix[window] = heldOutput[window]?.count ?? 0
+    }
+
+    /// Send the initial `capture-pane`s, which wait for the connection's first `refresh-client -C`.
+    ///
+    /// The snapshot is painted as LITERAL rows joined by hard line breaks, so it bakes the width it was
+    /// captured at into the surface's grid. Taken before the client resize, that is tmux's pre-attach size
+    /// (the gateway pty's seed, or whatever a previous client left), and every wrapped line lands broken at
+    /// the wrong column — permanently, because a shell never redraws its scrollback and no reflow can undo a
+    /// hard break. Behind the resize, tmux has already reflowed the pane to the surface's size and the
+    /// snapshot matches what the pane actually holds.
+    private func flushDeferredCaptures() {
+        let windows = deferredCaptureWindows
+        guard !windows.isEmpty else { return }
+        captureFallbackWork?.cancel(); captureFallbackWork = nil
+        deferredCaptureWindows.removeAll()   // cleared FIRST: the captures must not count themselves
+        for window in windows {
+            guard let pane = pendingLeadingPane[window] else { continue }
+            sendCommand(.capturePane(pane))
+            pendingCaptureWindows.append(window)
+        }
+    }
+
+    /// Release the deferred captures anyway if no relay child ever reports a size — there would be no
+    /// `refresh-client` to wait behind, and a quiescent pane would stay blank forever.
+    private func armCaptureFallback() {
+        captureFallbackWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushDeferredCaptures() }
+        captureFallbackWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
     private func apply(_ event: TmuxEvent) {
         switch event {
-        case .blockBegin(let num): blockLines[num] = []
+        case .blockBegin(let num):
+            blockLines[num] = []
+            claimCaptureBlock(num)
         case .blockLine(let num, let text): blockLines[num, default: []].append(text)
         case .blockEnd(let num, let isError):
             let lines = blockLines.removeValue(forKey: num) ?? []
-            if !pendingCaptureWindows.isEmpty, preCaptureReplies > 0 {
-                // The reply of a command sent in the list-windows gap (see `awaitingWindowList`): it
-                // precedes the capture replies in tmux's FIFO, so consume it here — painting it would
-                // shift EVERY capture into the wrong window.
-                preCaptureReplies -= 1
-            } else if let window = pendingCaptureWindows.first {
-                pendingCaptureWindows.removeFirst()
-                // An %error reply (e.g. the pane died between list-windows and its capture-pane) must
-                // not be painted as pane content: consume the block with EMPTY lines, which still
-                // releases the hold + flushes any held live output, but paints no snapshot.
-                paintCapturedContent(window: window, lines: isError ? [] : lines)
+            if let window = captureBlockOwner.removeValue(forKey: num) {
+                // An %error reply (e.g. the pane died between list-windows and its capture-pane) paints no
+                // snapshot: it still releases the hold and flushes the held live output in full, since
+                // without a snapshot none of it is redundant.
+                paintCapturedContent(window: window, lines: lines, snapshotValid: !isError)
             } else if !isError, !initializedWindows {
                 let windows = TmuxWindowList.parse(lines)
                 if !windows.isEmpty {
                     initializedWindows = true
-                    awaitingWindowList = false   // gap over: commands from here reply AFTER the captures
+                    awaitingWindowList = false
                     for w in windows { applyInitialWindow(w) }
-                    for w in windows where pendingLeadingPane[w.id] != nil {
-                        sendCommand(.capturePane(pendingLeadingPane[w.id]!))
-                        pendingCaptureWindows.append(w.id)
-                    }
+                    deferredCaptureWindows = windows.map(\.id).filter { pendingLeadingPane[$0] != nil }
+                    armCaptureFallback()
                     // The mirror sessions were added WITHOUT selecting (a `%window-add` echo must not
                     // steal focus); select the lowest-numbered window once, deliberately, so the attach
                     // lands the user on the connection's first window.
@@ -255,29 +301,33 @@ import agtermCore
         if !w.name.isEmpty { for effect in model.handle(.windowRenamed(w.id, name: w.name)) { apply(effect) } }
     }
 
-    /// Seed a window's surface with its captured current content (via the relay socket). tmux sends no
-    /// `%output` for a pre-existing window on attach, so without this a QUIESCENT window stays blank until
-    /// a live write. But if the pane produced live output DURING the capture round-trip (a fresh shell
-    /// printing its "Last login…" banner + prompt), that live stream is authoritative and complete from the
-    /// start: painting the older snapshot would either CLOBBER the prompt (the `\e[2J` clear lands after the
-    /// live bytes on the surface) or duplicate it. So when live output was held, deliver THAT and skip the
-    /// snapshot; only a truly quiescent pane (nothing held) gets the captured-screen paint. Clear+home
-    /// first; drop trailing blank rows so the cursor lands near the prompt.
-    private func paintCapturedContent(window: TmuxWindowID, lines: [String]) {
+    /// Seed a window's surface with its captured content (via the relay socket). tmux sends no `%output`
+    /// for a pre-existing window on attach, so without this a QUIESCENT window stays blank until a live
+    /// write. Clear+home first; drop trailing blank rows so the cursor lands near the prompt.
+    ///
+    /// Live output held during the round-trip is REPLAYED OVER the paint, but only its tail: tmux folded
+    /// everything up to `snapshotHeldPrefix` into the snapshot itself, and replaying that would duplicate it
+    /// (or, for a cursor-addressed program, scribble a partial frame into the scrollback). The tail is what
+    /// the clear would otherwise wipe — a prompt the shell printed after the capture ran, gone until a
+    /// manual Ctrl-L.
+    private func paintCapturedContent(window: TmuxWindowID, lines: [String], snapshotValid: Bool) {
+        let prefix = snapshotHeldPrefix.removeValue(forKey: window) ?? 0
         let wasAwaiting = windowsAwaitingCapture.remove(window) != nil
-        let held = heldOutput.removeValue(forKey: window) ?? []
+        var held = heldOutput.removeValue(forKey: window) ?? []
         guard let socket = windowToSocket[window] else { return }
-        if !held.isEmpty {
-            socket.send(.data(held)); return
-        }
         // A capture that outlived its hold (released by the cap in `holdOutput`) must NOT paint: live
         // output has been routing straight to the surface since the release, and the stale snapshot's
         // clear+home would wipe it — the exact clobber this machinery exists to prevent.
         guard wasAwaiting else { return }
-        var rows = lines
-        while let last = rows.last, last.trimmingCharacters(in: .whitespaces).isEmpty { rows.removeLast() }
-        guard !rows.isEmpty else { return }
-        socket.send(.data(Array(("\u{1b}[2J\u{1b}[H" + rows.joined(separator: "\r\n")).utf8)))
+        if snapshotValid {
+            held.removeFirst(min(prefix, held.count))
+            var rows = lines
+            while let last = rows.last, last.trimmingCharacters(in: .whitespaces).isEmpty { rows.removeLast() }
+            if !rows.isEmpty {
+                socket.send(.data(Array(("\u{1b}[2J\u{1b}[H" + rows.joined(separator: "\r\n")).utf8)))
+            }
+        }
+        if !held.isEmpty { socket.send(.data(held)) }
     }
 
     /// Buffer pre-capture live output for a window awaiting its `capture-pane` paint. If the hold exceeds
@@ -307,6 +357,8 @@ import agtermCore
             if let id = windowToSession.removeValue(forKey: window) { store.closeSession(id) }
             pendingLeadingPane[window] = nil
             windowsAwaitingCapture.remove(window)
+            deferredCaptureWindows.removeAll { $0 == window }
+            snapshotHeldPrefix[window] = nil
             heldOutput[window] = nil
             heldInput[window] = nil
         case .routeOutput(let window, let bytes):
@@ -383,6 +435,7 @@ import agtermCore
         let work = DispatchWorkItem { [weak self] in
             guard let self, let size = self.latestSize else { return }
             self.sendCommand(.resizeClient(cols: size.cols, rows: size.rows))
+            self.flushDeferredCaptures()   // the initial snapshots wait behind this size (see the flush)
         }
         resizeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: work)
@@ -460,6 +513,8 @@ import agtermCore
         windowToSession.removeValue(forKey: window)
         pendingLeadingPane[window] = nil
         windowsAwaitingCapture.remove(window)
+        deferredCaptureWindows.removeAll { $0 == window }
+        snapshotHeldPrefix[window] = nil
         heldOutput[window] = nil
         heldInput[window] = nil
         // The session usually dies with the child (closePrimaryPane), but a LOCAL split promotes and
@@ -513,6 +568,7 @@ import agtermCore
     private func teardownWorkspace() {
         guard gateway != nil || workspaceID != nil || bootstrapSessionID != nil else { return }
         resizeWork?.cancel(); resizeWork = nil; latestSize = nil
+        captureFallbackWork?.cancel(); captureFallbackWork = nil
         closeBootstrap()
         for socket in windowToSocket.values { socket.close() }
         windowToSocket.removeAll()
@@ -522,9 +578,12 @@ import agtermCore
         pendingLeadingPane.removeAll()
         windowsAwaitingCapture.removeAll()
         heldOutput.removeAll()
+        snapshotHeldPrefix.removeAll()
         heldInput.removeAll()
         blockLines.removeAll()
         pendingCaptureWindows.removeAll()
+        deferredCaptureWindows.removeAll()
+        captureBlockOwner.removeAll()
         awaitingWindowList = false
         preCaptureReplies = 0
         pendingLocalWindowSelect = false
