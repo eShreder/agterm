@@ -371,6 +371,8 @@ import agtermCore
             teardownWorkspace()
         case .diagnostic(let message):
             Self.log.info("\(message, privacy: .public)")
+        case .trace(let message):
+            Self.log.debug("\(message, privacy: .public)")
         }
     }
 
