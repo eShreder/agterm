@@ -667,6 +667,23 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   the mirror.
 - Resize is per CONNECTION, a v1 limit: the relay forwards SIGWINCH as `refresh-client -C`, which sizes
   the tmux CLIENT, so shrinking one mirrored surface reflows every window of that connection.
+- A mirrored surface RENDERS but never ANSWERS. `TmuxOutputFilter` strips terminal queries (DA1/2/3,
+  DSR/CPR/DEC DSR, DECRQM, XTVERSION, XTGETTCAP, DECRQSS, the kitty keyboard query, XTQMODKEYS, and the
+  OSC 4/10/11/12 QUERY forms) and keyboard-protocol switches (kitty push/pop/set, XTMODKEYS) out of
+  `%output` between `.output` and `.routeOutput`.
+  tmux is the terminal of record here and answers those itself, host-side and instantly; the surface's own
+  answer arrives an ssh round-trip later, after the asking program took tmux's and exited, so it lands on
+  whatever reads the pane now — the `62;22;52c` tail on the prompt after `ZZ` in nvim.
+  A switch is worse than late: it leaves the surface encoding keys in a protocol the remote never enabled
+  and whose disable never comes, which is the stuck `65;2u` capitals that only `reset` clears.
+  Set forms, SGR, `CSI s`/`CSI u`, every DECSET/DECRST and every other OSC pass through byte-identical.
+  The cost is no Ctrl+Shift disambiguation and no XTGETTCAP probing inside tmux windows; a query tmux does
+  not answer times out, which is the unsupported-capability path every TUI already handles.
+- That filter is a streaming machine keyed by PANE, never a per-chunk match: sequences straddle `%output`
+  chunks, so an ambiguous tail is held back and resolved by the next one, and a candidate that overflows
+  the bound or is disqualified flushes through untouched rather than being guessed at.
+  Drops log at DEBUG via `TmuxModelEffect.trace`, which exists because one `.diagnostic` per query — DSR
+  can arrive per prompt — would swamp info.
 - The attach `capture-pane` snapshots wait behind that first `refresh-client -C` (2s fallback if no relay
   child ever reports a size). The paint is literal rows joined by hard breaks, so a snapshot taken at
   tmux's pre-attach size bakes that width into the surface permanently — nothing redraws a shell's

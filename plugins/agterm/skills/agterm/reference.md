@@ -1213,6 +1213,15 @@ most visibly by `session split` on it, which halves its main pane — reflows ev
 connection. Prefer resizing the agterm window over splitting a mirror when the other windows' layout
 matters.
 
+The mirrored surface RENDERS but never ANSWERS. Terminal queries (device attributes, DSR/cursor position,
+DECRQM, XTVERSION, XTGETTCAP, DECRQSS, the kitty keyboard query, and the OSC 4/10/11/12 query forms) and
+keyboard-protocol switches (kitty keyboard, XTMODKEYS) are stripped from the pane stream before it
+reaches the terminal. tmux answers those itself, instantly; the surface's answer would arrive an ssh
+round-trip later, after the asking program already took tmux's and moved on, and land on the shell prompt
+(the classic `62;22;52c` after quitting nvim). So a program in a tmux window gets tmux's reply or a
+timeout, and its keys stay in the legacy encoding — no Ctrl+Shift disambiguation, no capability probing.
+Everything else, colors and mouse and bracketed paste and altscreen included, is untouched.
+
 - `agtermctl tmux attach <host> [--session NAME] [--workspace-name NAME]` — ssh to `<host>` and attach-or-create
   the tmux session (default `main`). Mirrors its windows; prints the connection id (`result.id`, the
   mirror-workspace uuid) so a script can detach/kill later without scraping `tmux list`. A repeat attach

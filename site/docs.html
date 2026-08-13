@@ -1095,6 +1095,14 @@
               per-connection rather than per-window — resizing one mirrored session (splitting it, for instance) reflows every
               window of that connection.
             </p>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              A mirrored session renders but never answers. Terminal queries — device attributes, cursor position, background
+              color, capability probes — and keyboard-protocol switches are stripped from the pane stream, because tmux answers
+              those itself and a second answer from the Mac would arrive a round-trip later, landing on your shell prompt as
+              stray text like <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">62;22;52c</span>
+              after quitting an editor. Programs see tmux's reply or a timeout, and keys keep their classic encoding. Colors,
+              mouse, bracketed paste, and full-screen apps are untouched.
+            </p>
             <div
               style="
                 background: #15191c;

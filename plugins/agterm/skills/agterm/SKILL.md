@@ -511,6 +511,11 @@ Sizing is per-connection: a mirrored surface's resize becomes `refresh-client -C
 tmux client, so resizing one mirrored session (notably `session split` on it) reflows every window of
 that connection.
 
+A mirrored surface renders but never answers: terminal queries (device attributes, cursor position,
+color, capability) and keyboard-protocol switches are stripped from the pane stream, because tmux already
+answers them and a second, later answer would land on the shell prompt. A program inside a tmux window
+sees whatever tmux replies, or a timeout, and keys stay in the legacy encoding.
+
 ## Displaying an image inline
 
 This skill bundles `scripts/show-image.sh`. It opens an overlay (a real terminal) and renders the

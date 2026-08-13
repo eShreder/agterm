@@ -67,4 +67,43 @@ struct TmuxSessionModelTests {
         // A second windowAdd for the same window must NOT create a second session.
         #expect(m.handle(.windowAdd(TmuxWindowID("@0"))) == [])
     }
+
+    @Test func routedOutputHasQueriesStrippedAndIsTraced() {
+        var m = Self.mappedModel()
+        let effects = m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("hi\u{1b}[c!".utf8)))
+        #expect(effects == [.trace("%0 muted: DA1 ^[[c"),
+                            .routeOutput(window: TmuxWindowID("@0"), bytes: Array("hi!".utf8))])
+    }
+
+    @Test func outputThatIsOnlyAQueryRoutesNothing() {
+        var m = Self.mappedModel()
+        let effects = m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("\u{1b}[>1u".utf8)))
+        #expect(effects == [.trace("%0 muted: kitty-push ^[[>1u")])
+    }
+
+    @Test func aQuerySplitAcrossOutputEventsIsStillStripped() {
+        var m = Self.mappedModel()
+        #expect(m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("a\u{1b}[".utf8)))
+                == [.routeOutput(window: TmuxWindowID("@0"), bytes: Array("a".utf8))])
+        #expect(m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("6nb".utf8)))
+                == [.trace("%0 muted: DSR ^[[6n"),
+                    .routeOutput(window: TmuxWindowID("@0"), bytes: Array("b".utf8))])
+    }
+
+    @Test func closingAWindowDropsItsHeldFilterState() {
+        var m = Self.mappedModel()
+        _ = m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("\u{1b}[".utf8)))
+        _ = m.handle(.windowClose(TmuxWindowID("@0"), unlinked: false))
+        _ = m.handle(.windowAdd(TmuxWindowID("@0")))
+        _ = m.handle(.layoutChange(window: TmuxWindowID("@0"), layout: "b25d,80x24,0,0,0"))
+        #expect(m.handle(.output(pane: TmuxPaneID("%0"), bytes: Array("c".utf8)))
+                == [.routeOutput(window: TmuxWindowID("@0"), bytes: Array("c".utf8))])
+    }
+
+    private static func mappedModel() -> TmuxSessionModel {
+        var m = TmuxSessionModel()
+        _ = m.handle(.windowAdd(TmuxWindowID("@0")))
+        _ = m.handle(.layoutChange(window: TmuxWindowID("@0"), layout: "b25d,80x24,0,0,0"))
+        return m
+    }
 }
