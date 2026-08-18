@@ -442,7 +442,8 @@ final class ControlServerPickTests: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         let store = try XCTUnwrap(library.store(for: id))
-        window.contentView = WindowAccessor.TitleProbeView(windowID: id, library: library, store: store)
+        window.contentView = WindowAccessor.TitleProbeView(windowID: id, library: library, store: store,
+                                                          actions: actions)
         registeredWindows[id] = window
         return window
     }

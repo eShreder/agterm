@@ -203,6 +203,7 @@
             <a href="#keymap" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">keymap</a>
             <a href="#config" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">config</a>
             <a href="#restore" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">restore</a>
+            <a href="#tmux" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">tmux</a>
             <div style="height: 16px"></div>
             <span style="color: #4a5158; font-size: 11px; letter-spacing: 0.12em; padding: 4px 12px">HELP</span>
             <a href="#errors" style="color: #bfbab0; padding: 7px 12px; border-radius: 7px" class="hv9">Errors</a>
@@ -2617,6 +2618,134 @@
                 It does <em>not</em> clear a <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session new --command</span>
                 session's own command — that is the durable creation identity and still re-runs on restore when the setting is on.
                 This is the counterpart to the opt-in <em>Restore running commands on restart</em> setting.
+              </p>
+            </div>
+          </section>
+
+          <!-- TMUX -->
+          <section id="tmux" style="scroll-margin-top: 88px; padding-top: 56px">
+            <h2
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 700;
+                font-size: 28px;
+                letter-spacing: -0.02em;
+                margin: 0 0 16px;
+                padding-bottom: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+              "
+            >
+              tmux
+            </h2>
+            <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 0 0 16px">
+              Native <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">tmux -CC</span> sessions: each
+              remote tmux window is mirrored into an ordinary agterm session, so search, notifications, and the sidebar work as
+              usual. The mirror lives in its own workspace, which is never persisted — reattach it after a relaunch. A tmux window
+              that is itself split shows only its leading pane (v1).
+            </p>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl tmux attach &lt;host&gt; [--session NAME] [--workspace-name NAME]
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">tmux.attach</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                ssh to <span style="font-family: &quot;JetBrains Mono&quot;, monospace">&lt;host&gt;</span> (any ssh destination),
+                attach-or-create the tmux session
+                (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">--session</span>, default
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">main</span>) in
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">-CC</span> control mode, and mirror its windows into
+                a new <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tmux: host/session</span> workspace
+                (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">--workspace-name</span> overrides that label).
+                Prints the connection id — the mirror-workspace id that
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">tmux detach</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">kill</span>
+                address. A repeat attach to a host+session already mirrored focuses that connection and prints the same id.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                Errors: <span style="font-family: &quot;JetBrains Mono&quot;, monospace">invalid ssh host</span> (empty, or starting
+                with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">-</span>, which ssh would read as an option),
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">no open window</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tmux attach failed to spawn ssh</span>.
+                <strong style="color: #bfbab0">Read-back:</strong> each mirrored session's
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span> node carries
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tmuxWindow</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">tmuxPane</span>
+                (omitted for a local session).
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl tmux list
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">tmux.list</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                The live connections, one per line as
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">&lt;id&gt;&nbsp;&nbsp;&lt;host&gt;/&lt;session&gt;&nbsp;&nbsp;[window names]</span>.
+                Under <span style="font-family: &quot;JetBrains Mono&quot;, monospace">--json</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.tmuxConnections</span> is a list of
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">host</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">session</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">windows</span>.
+                Host + session is the connection identity, so two connections to one host stay distinguishable.
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl tmux detach [id]
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">tmux.detach</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Soft detach: the local mirror workspace is removed and tmux keeps running server-side, so the session can be
+                reattached later. The id is the mirror-workspace id from
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">tmux list</span> — a
+                case-insensitive full id or a unique prefix, like every other target. Omit it only when a single connection is
+                live; with more than one, a bare command errors
+                (<span style="font-family: &quot;JetBrains Mono&quot;, monospace">multiple tmux connections; specify an id</span>)
+                rather than detaching an arbitrary one. Echoes the matched id.
+              </p>
+            </div>
+
+            <div style="background: #22272b; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 11px; padding: 18px 20px; margin-bottom: 12px">
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 13.5px; color: #6d82f3; line-height: 1.6; word-break: break-word">
+                agtermctl tmux kill [id]
+              </div>
+              <div style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 11.5px; color: #6b727a; margin-top: 6px">tmux.kill</div>
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
+                Hard remote teardown: sends
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">kill-session</span>, ending every window of that tmux
+                session on the server. Same id rules as
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">tmux detach</span>.
+              </p>
+              <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
+                The remote half is best-effort: the reply reports that the kill was sent, and the local mirror is torn down either
+                way, so on a dead or hung connection the remote session may survive.
+              </p>
+            </div>
+
+            <div
+              style="
+                background: #22272b;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-left: 3px solid #6d82f3;
+                border-radius: 11px;
+                padding: 16px 20px;
+                margin: 0 0 8px;
+              "
+            >
+              <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 0">
+                <strong style="color: #e6e1d7">Mirrored sessions are backend-aware.</strong>
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session close</span> on a
+                mirrored session runs <span style="font-family: &quot;JetBrains Mono&quot;, monospace">kill-window</span> and
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session rename</span> runs
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">rename-window</span> on the remote;
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">type</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">copy</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">text</span>/<span style="font-family: &quot;JetBrains Mono&quot;, monospace">search</span>
+                and split/scratch/overlay stay local — and because a mirrored surface's resize becomes
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">refresh-client -C</span>, which sizes the whole tmux
+                client, splitting one mirrored session reflows every window of that connection. Opening a new tmux window is
+                GUI-only (New Session ⌘T on a mirrored session);
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">session new</span> always
+                creates a local session. Any session-targeting command also accepts the
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace; white-space: nowrap">--target "tmux:$TMUX_PANE"</span>
+                / <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tmux:@&lt;window&gt;</span> addressing sugar.
               </p>
             </div>
           </section>

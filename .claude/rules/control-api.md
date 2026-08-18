@@ -12,6 +12,10 @@ paths:
   - "agtermCore/Sources/agtermCore/CLIInstall.swift"
   - "agtermCore/Sources/agtermCore/AgentHooksInstall.swift"
   - "agtermCore/Sources/agtermCore/SkillInstall.swift"
+  - "agterm/Tmux/*.swift"
+  - "agtermCore/Sources/agtermCore/Tmux*.swift"
+  - "agtermCore/Sources/agtermCore/RelayProtocol.swift"
+  - "agtermCore/Sources/agtermCore/PTYProcess.swift"
   - "agtermUITests/Control*.swift"
   - "agtermUITests/SessionTextUITests.swift"
   - "plugins/agterm/skills/agterm/**"
@@ -120,6 +124,7 @@ adding one is an edit to this list and the surfaces that document the command it
 renumbering. Do not reintroduce a count anywhere.
 
 - `tree`, `events.read`
+- `tmux.attach`, `tmux.detach`, `tmux.list`, `tmux.kill`
 - `workspace.new`, `.rename`, `.delete`, `.select`, `.go`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
 - `session.new`, `.duplicate`, `.close`, `.select`, `.rename`, `.reveal`, `.move`, `.type`, `.split`,
   `.split.close`,
@@ -630,6 +635,82 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   must reapply color after `windowOpacity` updates, including within-range drags that do not reload.
 - `Fit`/`Position` are CaseIterable typed enums. Revalidate free-text path/color during emission.
   Tree reads the stored background specification. See [[libghostty]] for live OSC 11 precedence.
+
+## tmux (`-CC` native sessions)
+
+- `tmux.attach` requires `args.host` (any ssh target), reuses `args.name` as the tmux session name
+  (default `main`), and optionally takes `args.workspaceName` as the mirror label. The label rides
+  `workspaceName`, not `workspace`, because `workspace` addresses an EXISTING workspace everywhere else
+  and attach creates its own. It spawns `ssh -tt <host> tmux -CC …` and mirrors every tmux window into a
+  fresh ephemeral `tmux: host/session` workspace; a repeat attach to the same host+session focuses the
+  live connection instead of duplicating it. `result.id` is the mirror-workspace uuid on both paths.
+- Attach failures stay discriminated (`AppActions.TmuxAttachOutcome`): `invalid ssh host` (empty or
+  `-`-prefixed, the ssh-option-injection screen), `no open window`, and `tmux attach failed to spawn ssh`.
+- `tmux.list` returns `ControlResult.tmuxConnections` (`[ControlTmuxNode]`: workspace uuid, host, tmux
+  session name, window names). Host plus session is the connection identity, so two connections to one
+  host stay distinguishable. `tmux.detach` sends `detach-client`, `tmux.kill` sends `kill-session`; both
+  drop the local mirror and echo the matched id, captured before teardown. The remote half of
+  `tmux.kill` is best-effort — the local mirror dies on the `%exit` echo or a ~2s fallback regardless.
+- Connection ids resolve like every other target (full uuid or unique prefix); omitting the id works only
+  with exactly one live connection and otherwise errors `multiple tmux connections; specify an id`
+  rather than acting on an arbitrary one.
+- Each connection is one app-side `TmuxController` over the host-free `TmuxGateway` `-CC` demux. Every
+  tmux window becomes an ordinary command-session whose child is `agtermctl tmux-pipe` bridged through a
+  per-window `RelaySocket`, so notifications, search, and `view.session` work with no engine fork.
+- `session.close`/`session.rename` are backend-aware: a session carrying a `Session.tmuxBinding` routes to
+  `kill-window`/`rename-window` and is torn down or relabeled by the `%window-close`/`%window-renamed`
+  echo. ⌘W, the sidebar Close/rename, and both control arms share those store-independent routers, so the
+  mirror cannot diverge from tmux. Sidebar and rename paths pass their OWN window store for the local half.
+- Opening a tmux window is GUI-only (`newSession` routes to `controller.newWindow()`): control
+  `session.new` has no synchronous window→session id to return, since `%window-add` is async, so it
+  creates a plain local session. `session.split`/`.scratch`/`.overlay.*` stay local by design and die with
+  the mirror.
+- Resize is per CONNECTION, a v1 limit: the relay forwards SIGWINCH as `refresh-client -C`, which sizes
+  the tmux CLIENT, so shrinking one mirrored surface reflows every window of that connection.
+- A mirrored surface RENDERS but never ANSWERS. `TmuxOutputFilter` strips terminal queries (DA1/2/3,
+  DSR/CPR/DEC DSR, DECRQM, XTVERSION, XTGETTCAP, DECRQSS, the kitty keyboard query, XTQMODKEYS, and the
+  OSC 4/10/11/12 QUERY forms) and keyboard-protocol switches (kitty push/pop/set, XTMODKEYS) out of
+  `%output` between `.output` and `.routeOutput`.
+  tmux is the terminal of record here and answers those itself, host-side and instantly; the surface's own
+  answer arrives an ssh round-trip later, after the asking program took tmux's and exited, so it lands on
+  whatever reads the pane now — the `62;22;52c` tail on the prompt after `ZZ` in nvim.
+  A switch is worse than late: it leaves the surface encoding keys in a protocol the remote never enabled
+  and whose disable never comes, which is the stuck `65;2u` capitals that only `reset` clears.
+  Set forms, SGR, `CSI s`/`CSI u`, every DECSET/DECRST and every other OSC pass through byte-identical.
+  The cost is no Ctrl+Shift disambiguation and no XTGETTCAP probing inside tmux windows; a query tmux does
+  not answer times out, which is the unsupported-capability path every TUI already handles.
+- That filter is a streaming machine keyed by PANE, never a per-chunk match: sequences straddle `%output`
+  chunks, so an ambiguous tail is held back and resolved by the next one, and a candidate that overflows
+  the bound or is disqualified flushes through untouched rather than being guessed at.
+  Drops log at DEBUG via `TmuxModelEffect.trace`, which exists because one `.diagnostic` per query — DSR
+  can arrive per prompt — would swamp info.
+- The attach `capture-pane` snapshots wait behind that first `refresh-client -C` (2s fallback if no relay
+  child ever reports a size). The paint is literal rows joined by hard breaks, so a snapshot taken at
+  tmux's pre-attach size bakes that width into the surface permanently — nothing redraws a shell's
+  scrollback and no reflow undoes a hard break. Held `%output` is replayed OVER the paint from the hold's
+  length at the reply's `%begin`; everything before that boundary is already folded into the snapshot.
+  Reply blocks bind to their window at `%begin` for the same reason.
+- A relay child that dies on its own (crash, external kill, not a teardown) is unmirrored through
+  `tmuxRelayChildExited`, which drops the mapping/socket and clears `tmuxBinding` so `tmux.list` and
+  `tmux:` addressing stay truthful and a split-promoted survivor is not left with a dead binding.
+- Mirror sessions are added with `select: false`, so a remote `%window-add` never steals selection or
+  clears the focus filter. Only the initial attach batch (`focus()`, lowest-numbered window) and a window
+  this client created (the `pendingLocalWindowSelect` latch, 5s generation-guarded timeout) select.
+  Keystrokes before the first `%layout-change` are held per window (`heldInput`, 64 KiB) and flushed to
+  `send-keys` once the leading pane id arrives.
+- `PTYProcess` holds `pidLock` across `waitpid` plus the `pid = -1` clear and across `terminate()`/`deinit`
+  SIGTERM, so a kill cannot hit a recycled PID. Spawn resets signal dispositions/mask and starts the child
+  as a session leader with the pts as controlling terminal, because ssh prompts read `/dev/tty`.
+- `AGTERM_TMUX_LOCAL=1` attaches a local `tmux -CC` at launch and `AGTERM_TMUX_BIN`/`AGTERM_TMUX_SOCKET`
+  pick binary/server. `attachLocal` is deliberately dev-only — no command, flag, or menu item — a
+  DEFERRAL, not an exemption: a non-ssh transport is its own design with its own security note.
+- `--target tmux:%<pane>` / `tmux:@<window>` addresses a live mirrored session by tmux identity, for a
+  caller holding `$TMUX_PANE` or an id read from `tree`. `resolveSessionTarget` strips the prefix and maps
+  through the `tmuxLookup` closure before normal uuid resolution, so the result flows through the same
+  cross-window lookup. A miss returns `no such session: tmux:%999`, echoing the original sugar — a pinned
+  wire contract. Only each window's leading pane is addressable, so `%<pane>` and `@<window>` of one
+  window resolve to the same session. Read back `ControlSessionNode.tmuxWindow`/`tmuxPane`, omitted for a
+  local session and populated from the same live-controller search.
 
 ## Documentation mirrors
 

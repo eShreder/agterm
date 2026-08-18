@@ -11,7 +11,8 @@ extension AppStore {
     /// Builds a `Snapshot` of the current tree; each session captures its live `currentCwd` (or `initialCwd`
     /// if no PWD report arrived). Runs on `@MainActor`; the result is `Sendable`, safe to hand to a writer.
     public func snapshot() -> Snapshot {
-        let workspaceSnapshots = workspaces.map { workspace in
+        // Ephemeral workspaces (tmux -CC mirrors) never persist — they rebuild from live tmux on attach.
+        let workspaceSnapshots = workspaces.filter { !$0.ephemeral }.map { workspace in
             let sessions = workspace.sessions.map(sessionSnapshot)
             // only a collapsed workspace writes the flag, so an all-expanded tree matches a legacy snapshot.
             return WorkspaceSnapshot(id: workspace.id, name: workspace.name, sessions: sessions,
