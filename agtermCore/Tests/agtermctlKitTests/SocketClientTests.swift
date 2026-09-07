@@ -836,6 +836,14 @@ struct SocketClientTests {
         #expect(decoded.result?.id == "9f3c")
     }
 
+    @Test func formatTreeIncludesTheSplitDirectory() throws {
+        let data = Data(#"{"id":"s","name":"shell","cwd":"/main","splitCwd":"/other","active":true,"split":true,"overlay":false,"scratch":false,"flagged":false}"#.utf8)
+        let session = try JSONDecoder().decode(ControlSessionNode.self, from: data)
+        let tree = ControlTree(workspaces: [ControlWorkspaceNode(id: "w", name: "work", active: true, sessions: [session])])
+        let output = SocketClient.formatResponse(ControlResponse(ok: true, result: ControlResult(tree: tree)), json: false)
+        #expect(output.contains("/main  split cwd: /other"))
+    }
+
     @Test func formatResponseTree() {
         let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: true)
         let workspace = ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])

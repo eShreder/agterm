@@ -444,6 +444,9 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">id</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">name</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">cwd</span>,
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCwd</span> (the split pane's last reported
+                directory, falling back to its restored directory, then the primary cwd; present for shown or hidden splits,
+                omitted without a split or on older servers),
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">title</span> (raw OSC terminal title, omitted when
                 none), <span style="font-family: &quot;JetBrains Mono&quot;, monospace">active</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">split</span> (both split panes are SHOWN),
@@ -1264,6 +1267,7 @@
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">restoreCommand</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">commandWait</span> change sides in
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">tree</span>; the split-side read-back is
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCwd</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitForeground</span>,
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitRestoreCommand</span> and
                 <span style="font-family: &quot;JetBrains Mono&quot;, monospace">splitCommandWait</span>. The GUI twin is

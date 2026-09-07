@@ -331,7 +331,8 @@ public final class AppStore {
                                           // no app-side closure like the font sizes above. An empty slot is
                                           // false, not omitted — "no terminal" either way to a caller.
                                           realized: session.surface?.isRealized ?? false,
-                                          context: session.context, remoteHost: session.remoteHost)
+                                          context: session.context, remoteHost: session.remoteHost,
+                                          splitCwd: session.hasSplit ? session.cwd(for: .right) : nil)
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
                                         active: workspace.id == activeWorkspaceID,

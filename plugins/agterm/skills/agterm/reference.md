@@ -106,7 +106,9 @@ SIGTERM use normal process behavior.
 ## tree
 
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
-`id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
+`id`, `name`, `cwd`, `splitCwd` (the split pane's last reported directory, falling back to its restored
+directory, then the primary cwd; omitted without a split or on older servers), `title` (the raw OSC terminal
+title, for example a remote host over SSH, omitted
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
 `realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned and a
@@ -514,7 +516,7 @@ error keeps those names for compatibility.
   roles without restarting either process. Focus follows its terminal; split axis and ratio stay fixed.
   Works when the split is shown or hidden and under zoom/dashboard. Errors when there is no split or a
   surface is not ready. The new primary supplies `tree`'s `cwd`/`title`/`foreground`/`restoreCommand`/
-  `commandWait`; the other side supplies `splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
+  `commandWait`; the other side supplies `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the

@@ -402,8 +402,9 @@ struct SocketClient {
                 let realizedTag = session.realized == false ? " (not realized)" : ""
                 let tags = splitTag + realizedTag + (session.overlay ? " (overlay)" : "")
                     + (session.scratch ? " (scratch)" : "")
+                let splitCwdSuffix = session.splitCwd.map { "  split cwd: \($0)" } ?? ""
                 let titleSuffix = session.title.map { "  title: \($0)" } ?? ""
-                lines.append("  \(smark) \(session.name)\(tags)  [\(session.id)]  \(session.cwd)\(titleSuffix)")
+                lines.append("  \(smark) \(session.name)\(tags)  [\(session.id)]  \(session.cwd)\(splitCwdSuffix)\(titleSuffix)")
             }
         }
         return lines.joined(separator: "\n")

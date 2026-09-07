@@ -212,7 +212,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   This command is deliberately not idempotent: every successful call reverses the order, and two calls
   restore the prior model and snapshot. It remains valid under zoom and dashboard. Read the new primary
   through `cwd`/`title`/`foreground`/`restoreCommand`/`commandWait`, and the other side through
-  `splitForeground`/`splitRestoreCommand`/`splitCommandWait`; tree has no split cwd/title fields.
+  `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`; split title remains unexposed.
 - `session.scratch` is a third, nonpersisted login shell with on/off/toggle. It spawns lazily, survives
   hiding, recreates after exit, and renders as a full translucent cover below overlay. It has no session
   PWD/title link but a weak watermark link. GUI surfaces are Command-J, titlebar, View, and palette.
@@ -749,6 +749,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   no `TERM_PROGRAM_VERSION` (`CustomCommandRunner` merges `ProcessInfo.processInfo.environment` with the
   `AGT_*` context only). That is why a recipe preflight uses `agtermctl version` rather than the variable.
 
+- `splitCwd` reports `cwd(for: .right)` while `hasSplit` is true, shown or hidden. It falls back from
+  the last reported split cwd to its restored initial cwd, then the primary effective cwd. Omitted without
+  a split or on older servers; it is model read-back, not a fresh process query. `title` stays the raw
+  primary OSC title; exposing `splitTitle` is deferred.
 - Session nodes include foreground/split foreground argv, idle shell basenames, background spec, overlay
   size, pane overlays, split axis, split ratio, split focus, status fields, flag, unseen, restore pins,
   surfaces, `realized`, `backedByZmx`, and `remoteHost`.
