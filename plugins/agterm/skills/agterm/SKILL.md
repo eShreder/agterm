@@ -91,9 +91,11 @@ One slot, so a session shows either a HUD or a program overlay, never both. Sepa
 or whatever share Settings sets instead; not part of the tree and not owned by a window).
 
 Inspect the live tree any time with `agtermctl tree --json` (workspaces → sessions, each with
-`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `hud`, `ask`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
+`id`, `name`, `cwd`, `splitCwd`, `title`, `active`, `split`, `overlay`, `hud`, `ask`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
 terminal title (e.g. a remote host over SSH), omitted when none was reported — read it when a
-session's local `cwd` is stale because it's connected to a remote. `surfaces[].id` is the
+session's local `cwd` is stale because it's connected to a remote. `splitCwd` is the split pane's last
+reported directory, falling back to its restored directory, then the primary cwd. It is present for a
+shown or hidden split and omitted without one or on older servers. `surfaces[].id` is the
 control address for `surface zoom` and `surface cursor` (`left`, `right`, `scratch`, `overlay`,
 `overlay-left`, or `overlay-right`), including hidden-but-alive split/scratch surfaces. The tree object also carries
 read-only top-level fields — `idleMs` (ms since the last user input in the window), `autoFollowMs`
@@ -349,7 +351,7 @@ omitted when expanded).
 - `session swap`: exchange the two terminals' physical positions and primary/split roles without restarting
   them. Focus follows the terminal; axis and divider ratio stay fixed. Works on shown or hidden splits and
   under zoom/dashboard; errors when there is no split or either surface is not ready. Read the new primary
-  from `tree`'s `cwd`/`title`/`foreground` and the other side from `splitForeground`.
+  from `tree`'s `cwd`/`title`/`foreground` and the other side from `splitCwd`/`splitForeground`.
 - `session scratch [on|off|toggle] [--command CMD]` — full-coverage third shell (hide keeps it alive; `exit`
   recreates). `--command` (when showing) runs a program instead of a shell, run-once like `session new
   --command` (respawns the scratch if one is open). Target your own session with
@@ -477,6 +479,9 @@ omitted when expanded).
 `toggle`, the id may be omitted so `window minimize on` targets the active window; errors on a full-screen
 window; read back as `minimized` on `window list`).
 
+`window resize` prints the applied width and height as `W H`, after clamping. JSON reports
+`result.width` and `result.height` in integer points, matching `window list` geometry.
+
 **surface** — `surface zoom [show|hide|toggle] [--target surface:<session-id>:left|right|scratch|overlay|overlay-left|overlay-right|quick] [--window W]`
 — zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
 button remains). Omit `--target` to use the active surface;
@@ -590,7 +595,9 @@ without one (the bare form is exactly what the remote call runs on the far side)
 the ids: neither is unique), `context` when set, and per-pane `foreground`; only a session whose every pane
 still has a live daemon is listed, and an empty list does NOT mean the far side is not in live mode -
 `zmx list` reports that · `zmx attach
-HOST SESSION` - open one of them here, marked remote and carrying its split; takes the ID from that
+HOST SESSION [--window W]` - open one of them here, marked remote and carrying its split, in the
+chosen open local window's current workspace (default: frontmost after discovery). A background target
+keeps the frontmost window unchanged; an invalid or closed target fails. Takes the ID from that
 listing, not the name, and resolves the remote again first, so a session that has gone fails instead of
 handing back a fresh shell wearing its name. Closing it here ends only this side's connection and it is
 never restored after a relaunch. Both run ssh non-interactively, so key-based auth must already work, and

@@ -119,6 +119,98 @@ final class ControlServerZmxTests: XCTestCase {
         XCTAssertFalse(response.error?.contains("rm -rf") ?? true)
     }
 
+    func testAttachTargetsABackgroundWindowWithoutChangingTheActiveWindow() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let frontStore = try XCTUnwrap(library.activeStore)
+        let destination = library.newWindow(name: "other").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        library.frontmostWindowID = front
+        let originalCount = frontStore.workspaces.flatMap(\.sessions).count
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.splitProjection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: String(destination.uuidString.prefix(8)))))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertTrue(response.ok)
+        let id = try XCTUnwrap(response.result?.id)
+        let tree = try XCTUnwrap(server.controlTree(window: destination.uuidString).result?.tree)
+        let node = try XCTUnwrap(tree.workspaces.flatMap(\.sessions).first { $0.id == id })
+        XCTAssertEqual(node.remoteHost, "buildbox")
+        XCTAssertEqual(node.hasSplit, true)
+        XCTAssertEqual(destinationStore.selectedSessionID?.uuidString, id)
+        XCTAssertEqual(frontStore.workspaces.flatMap(\.sessions).count, originalCount)
+        XCTAssertEqual(library.activeWindowID, front)
+    }
+
+    func testAttachRefusesAClosedOrUnknownDestination() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let destination = library.newWindow(name: "closed").id
+        _ = library.loadStore(for: destination)
+        library.frontmostWindowID = front
+        library.closeWindow(destination)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = makeServer(list: "", remoteRunner: runner)
+        for target in [destination.uuidString, "missing-window"] {
+            let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+                args: ControlArgs(host: "buildbox", window: target)))
+            let response = try XCTUnwrap(dispatched)
+            XCTAssertFalse(response.ok)
+            XCTAssertNil(library.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        }
+    }
+
+    func testAttachRefusesADestinationClosedDuringDiscovery() async throws {
+        let front = try XCTUnwrap(library.activeWindowID)
+        let destination = library.newWindow(name: "closing").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        library.frontmostWindowID = front
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""), beforeReturn: {
+            self.library.closeWindow(destination)
+        })
+        let server = makeServer(list: "", remoteRunner: runner)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: destination.uuidString)))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertFalse(response.ok)
+        XCTAssertNil(destinationStore.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+        XCTAssertNil(library.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+    }
+
+    func testAttachRefusesAnAmbiguousWindowPrefix() async throws {
+        let directory = stateDir.appendingPathComponent("ambiguous")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let first = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000001"))
+        let second = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000002"))
+        let index = WindowsIndex(frontmost: first, windows: [
+            WindowEntry(id: first, name: "one", isOpen: true), WindowEntry(id: second, name: "two", isOpen: true),
+        ])
+        try JSONEncoder().encode(index).write(to: directory.appendingPathComponent("windows.json"))
+        let windows = WindowLibrary(directory: directory)
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
+        let server = ControlServer(library: windows, actions: AppActions(library: windows),
+            settingsModel: SettingsModel(library: windows, settingsStore: SettingsStore(directory: directory)),
+            identity: AppIdentity(version: "test", commit: "test"), remoteRunner: runner,
+            socketPath: directory.appendingPathComponent("control.sock").path)
+        let dispatched = await ControlDispatcher(actions: server).dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: "AAAAAAAA")))
+        let response = try XCTUnwrap(dispatched)
+        XCTAssertFalse(response.ok)
+        XCTAssertTrue(response.error?.contains("ambiguous") == true)
+        XCTAssertNil(windows.activeStore?.workspaces.flatMap(\.sessions).first { $0.remoteHost != nil })
+    }
+
+    func testUntargetedAttachUsesTheActiveWindowAfterDiscovery() async throws {
+        let destination = library.newWindow(name: "selected during discovery").id
+        let destinationStore = try XCTUnwrap(library.loadStore(for: destination))
+        let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""), beforeReturn: {
+            self.library.frontmostWindowID = destination
+        })
+        let server = makeServer(list: "", remoteRunner: runner)
+        let response = await server.attachRemoteSession(host: "buildbox", session: "s1")
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(destinationStore.activeSession?.remoteHost, "buildbox")
+    }
+
     func testAttachCreatesARemoteSessionWithAHoldingSshPane() async throws {
         let runner = FakeRemoteRunner(result: RemoteCommandResult(status: 0, stdout: Self.projection, stderr: ""))
         let server = makeServer(list: "", remoteRunner: runner)
@@ -797,15 +889,18 @@ private final class FakeRemoteRunner: RemoteCommandRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[String]] = []
     private let result: RemoteCommandResult
+    private let beforeReturn: (@MainActor @Sendable () -> Void)?
 
     var invocations: [[String]] { lock.withLock { recorded } }
 
-    init(result: RemoteCommandResult) {
+    init(result: RemoteCommandResult, beforeReturn: (@MainActor @Sendable () -> Void)? = nil) {
+        self.beforeReturn = beforeReturn
         self.result = result
     }
 
     func run(_ argv: [String], deadline _: TimeInterval) async -> RemoteCommandResult {
         lock.withLock { recorded.append(argv) }
+        await beforeReturn?()
         return result
     }
 }

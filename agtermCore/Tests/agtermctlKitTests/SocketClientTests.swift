@@ -836,6 +836,29 @@ struct SocketClientTests {
         #expect(decoded.result?.id == "9f3c")
     }
 
+    @Test(arguments: [("/other", "/main  split cwd: /other"), ("/main", "/main")])
+    func formatTreeIncludesOnlyADifferingSplitDirectory(_ splitCwd: String, _ expected: String) throws {
+        let data = Data(#"{"id":"s","name":"shell","cwd":"/main","splitCwd":"\#(splitCwd)","active":true,"split":true,"overlay":false,"scratch":false,"flagged":false}"#.utf8)
+        let session = try JSONDecoder().decode(ControlSessionNode.self, from: data)
+        let tree = ControlTree(workspaces: [ControlWorkspaceNode(id: "w", name: "work", active: true, sessions: [session])])
+        let response = ControlResponse(ok: true, result: ControlResult(tree: tree))
+        let output = SocketClient.formatResponse(response, json: false)
+        #expect(output == "* work  [w]\n  * shell (split)  [s]  \(expected)")
+        let json = SocketClient.formatResponse(response, json: true)
+        let decoded = try JSONDecoder().decode(ControlResponse.self, from: Data(json.utf8))
+        #expect(decoded.result?.tree?.workspaces[0].sessions[0].splitCwd == splitCwd)
+    }
+
+    @Test func formatWindowResizeReportsAppliedWidthAndHeight() throws {
+        let response = try JSONDecoder().decode(ControlResponse.self, from: Data(#"{"ok":true,"result":{"id":"w","width":1200,"height":800}}"#.utf8))
+        #expect(SocketClient.formatResponse(response, json: false) == "1200 800")
+        let encoded = SocketClient.formatResponse(response, json: true)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
+        let result = try #require(json["result"] as? [String: Any])
+        #expect(result["width"] as? Int == 1200)
+        #expect(result["height"] as? Int == 800)
+    }
+
     @Test func formatResponseTree() {
         let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: true)
         let workspace = ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])

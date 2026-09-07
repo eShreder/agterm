@@ -212,7 +212,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   This command is deliberately not idempotent: every successful call reverses the order, and two calls
   restore the prior model and snapshot. It remains valid under zoom and dashboard. Read the new primary
   through `cwd`/`title`/`foreground`/`restoreCommand`/`commandWait`, and the other side through
-  `splitForeground`/`splitRestoreCommand`/`splitCommandWait`; tree has no split cwd/title fields.
+  `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`; split title remains unexposed.
 - `session.scratch` is a third, nonpersisted login shell with on/off/toggle. It spawns lazily, survives
   hiding, recreates after exit, and renders as a full translucent cover below overlay. It has no session
   PWD/title link but a weak watermark link. GUI surfaces are Command-J, titlebar, View, and palette.
@@ -749,6 +749,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   no `TERM_PROGRAM_VERSION` (`CustomCommandRunner` merges `ProcessInfo.processInfo.environment` with the
   `AGT_*` context only). That is why a recipe preflight uses `agtermctl version` rather than the variable.
 
+- `splitCwd` reports `cwd(for: .right)` while `hasSplit` is true, shown or hidden. It falls back from
+  the last reported split cwd to its restored initial cwd, then the primary effective cwd. Omitted without
+  a split or on older servers; it is model read-back, not a fresh process query. `title` stays the raw
+  primary OSC title; exposing `splitTitle` is deferred.
+- `window.resize` echoes the applied frame size after `setFrame`, rounded to integer points like
+  `window.list` geometry, as `result.width`/`result.height`. Human output is `W H`.
 - Session nodes include foreground/split foreground argv, idle shell basenames, background spec, overlay
   size, pane overlays, split axis, split ratio, split focus, status fields, flag, unseen, restore pins,
   surfaces, `realized`, `backedByZmx`, and `remoteHost`.
@@ -1005,7 +1011,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   pre-model failures leaving no half-built row; ssh itself starts AFTER insertion, so a transport failure
   is an ordinary pane exit on the held path. It matches the
   session by ID ALONE — remote names are mutable and non-unique across workspaces — and panes by role,
-  never array position. The row lands in the frontmost window's current workspace and is selected.
+  never array position. The row is selected in the destination window's current workspace.
+- `zmx.attach --window` resolves an open local destination after discovery, immediately before insertion.
+  Omitted, it uses the then-frontmost window. An explicit invalid or closed window fails without creating
+  a session; it never falls back or raises another window. The old `attachRemoteSession(host:session:)`
+  witness remains callable. Hosts implementing only that form accept untargeted calls and refuse explicit
+  window placement through the new overload's default.
 - The local cwd is this machine's home, not the remote one: libghostty chdirs the ssh process here and a
   path that exists on the far side may not exist locally. The attached shell reports its real cwd through
   the terminal stream.

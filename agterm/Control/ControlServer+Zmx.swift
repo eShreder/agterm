@@ -97,22 +97,23 @@ extension ControlServer {
         }
     }
 
+    func attachRemoteSession(host: String, session: String) async -> ControlResponse {
+        await attachRemoteSession(host: host, session: session, window: nil)
+    }
+
     /// Create a local session attached to one of `host`'s.
     ///
     /// The remote is resolved again here rather than trusted from whatever the caller last saw: a picker's
     /// answer can be minutes old, and a daemon that has gone since would otherwise be CREATED by the
     /// attach, handing back a fresh shell wearing the session's name. Everything that can fail is checked
     /// before the model is touched, so a refusal leaves no half-built row behind.
-    func attachRemoteSession(host: String, session: String) async -> ControlResponse {
+    func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse {
         let discovery = await remoteTree(host: host)
         guard discovery.ok, let tree = discovery.result?.remote else { return discovery }
         // by id only: remote session names are mutable and deliberately non-unique across workspaces, and
         // `zmx tree` prints the id for exactly this hand-off
         guard let remote = tree.sessions.first(where: { $0.id == session }) else {
             return ControlResponse(ok: false, error: "no attachable session \(session) on \(host)")
-        }
-        guard let store = library.activeStore, let workspace = store.currentWorkspaceID else {
-            return ControlResponse(ok: false, error: "no window to attach into")
         }
         // by role, never by position: a payload with two lefts or no left must fail rather than quietly
         // become one pane, or the wrong one
@@ -131,6 +132,14 @@ extension ControlServer {
             }
         } catch {
             return ControlResponse(ok: false, error: "\(host) reported a session agterm cannot address")
+        }
+        let store: AppStore
+        switch resolveOpenWindow(window) {
+        case .failure(let response): return response
+        case .success(let (_, resolved)): store = resolved
+        }
+        guard let workspace = store.currentWorkspaceID else {
+            return ControlResponse(ok: false, error: "no window to attach into")
         }
         // the LOCAL working directory, not the remote one: libghostty chdirs the ssh process here, and a
         // path that exists on the far side may not exist on this Mac. The attached shell reports its real

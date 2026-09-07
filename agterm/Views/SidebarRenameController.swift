@@ -10,10 +10,10 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
     private let store: AppStore
     weak var outlineView: NSOutlineView?
 
-    /// Called after an inline rename ends (commit or cancel), so the Coordinator can hand keyboard
-    /// focus back to the active terminal. Invoked asynchronously from `controlTextDidEndEditing` so the
+    /// Called with the edited row after commit or cancel, so the Coordinator can refresh its label and
+    /// return focus to the active terminal. Invoked asynchronously from `controlTextDidEndEditing` so the
     /// field editor's resign settles first.
-    var onRenameEnded: (() -> Void)?
+    var onRenameEnded: ((SidebarNode?) -> Void)?
 
     /// Set while an end-editing notification is being processed, to ignore the re-entrant end-editing the
     /// cancel/commit path can trigger.
@@ -108,7 +108,7 @@ final class SidebarRenameController: NSObject, NSTextFieldDelegate {
         // a rename ends with focus on the field editor; hand it back to the active terminal so the
         // sidebar never keeps keyboard focus (the design contract). deferred so the editor's resign
         // settles first — focusActiveTerminal bails while an NSText field editor is first responder.
-        DispatchQueue.main.async { [weak self] in self?.onRenameEnded?() }
+        DispatchQueue.main.async { [weak self] in self?.onRenameEnded?(node) }
         guard let node, !cancelled else { return }
 
         switch node.kind {

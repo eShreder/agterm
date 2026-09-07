@@ -72,6 +72,8 @@ the same of this app, which is the form the remote call runs over there:
 ```bash
 agtermctl zmx tree studio.local
 agtermctl zmx attach studio.local 7c1e4a02-...
+# Place it in a specific open local window.
+agtermctl zmx attach studio.local 7c1e4a02-... --window "$window_id"
 ```
 
 To let the user choose, pipe the listing through the picker:
@@ -447,11 +449,11 @@ and read it back — the twins of `session type`/`session text`, but always the 
 terminal (no `--target`/`--pane`).
 
 ```bash
-agtermctl quick show                                 # drop the overlay over whatever is active
-agtermctl quick type 'ls -la'$'\n'                   # inject keystrokes (\n runs it)
-echo "some payload" | agtermctl quick type --stdin   # pipe stdin in (e.g. a paste helper)
-agtermctl quick text --all                           # read its screen + scrollback back
-agtermctl tree | jq .quickVisible                    # is it open right now?
+agtermctl quick show                                    # drop the overlay over whatever is active
+agtermctl quick type 'ls -la'$'\n'                      # inject keystrokes (\n runs it)
+echo "some payload" | agtermctl quick type --stdin      # pipe stdin in (e.g. a paste helper)
+agtermctl quick text --all                              # read its screen + scrollback back
+agtermctl tree --json | jq '.result.tree.quickVisible'  # is it open right now?
 ```
 
 ## Flag a working set and view just the flagged sessions

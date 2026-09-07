@@ -22,8 +22,8 @@ struct Zmx: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Attach to a session on another Mac, as a session here.",
             discussion: """
-            Takes a host and the id of one of the sessions `zmx tree` listed, and opens it in this window \
-            marked as remote. A remote session with a split arrives with the same split.
+            Takes a host and the id of one of the sessions `zmx tree` listed, and opens it in the chosen window \
+            marked as remote. Defaults to the frontmost window after discovery. A remote session with a split arrives with the same split.
 
             The remote is resolved again before anything is created, so a session that has gone since the \
             list was taken fails rather than handing back a fresh shell wearing its name.
@@ -35,13 +35,15 @@ struct Zmx: ParsableCommand {
         var host: String
         @Argument(help: "The remote session's id, as `zmx tree` prints it.")
         var session: String
+        @Option(help: "Local open window id, unique prefix, or active (default: frontmost after discovery).")
+        var window: String?
         @OptionGroup var options: BasicOptions
 
         /// It creates a local session, so it echoes that session's id like every other create command.
         var echoesResultID: Bool { true }
 
         func makeRequest() throws -> ControlRequest {
-            ControlRequest(cmd: .zmxAttach, target: session, args: ControlArgs(host: host))
+            ControlRequest(cmd: .zmxAttach, target: session, args: ControlArgs(host: host, window: window))
         }
     }
 

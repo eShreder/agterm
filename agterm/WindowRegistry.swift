@@ -63,10 +63,10 @@ final class WindowRegistry {
 
     /// Resizes the on-screen window for `id` to `width` x `height` points (frame size), top edge fixed,
     /// clamped into `[window.minSize, screen.visibleFrame]` via `WindowGeometry.clampSize` (the single clamp
-    /// path). False if no window is registered for `id` (not open). The control-channel `window.resize` path.
+    /// path). Returns the applied frame size, or nil when the window is not registered.
     @discardableResult
-    func resize(_ id: WindowInfo.ID, width: Int, height: Int) -> Bool {
-        guard let window = windows[id] else { return false }
+    func resize(_ id: WindowInfo.ID, width: Int, height: Int) -> WindowGeometry.Size? {
+        guard let window = windows[id] else { return nil }
         let maxSize = resolvedScreen(for: window)?.visibleFrame.size
             ?? CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let size = WindowGeometry.clampSize(WindowGeometry.Size(CGSize(width: CGFloat(width), height: CGFloat(height))),
@@ -76,7 +76,7 @@ final class WindowRegistry {
         frame.origin.y += frame.size.height - size.height // keep the top edge fixed
         frame.size = size
         window.setFrame(frame, display: true)
-        return true
+        return WindowGeometry.Size(window.frame.size)
     }
 
     /// Moves the on-screen window for `id` so its top-left is at (`x`, `y`) points from the top-left of

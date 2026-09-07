@@ -159,6 +159,8 @@ public protocol ControlActions {
     /// Create a local session attached to `session` on `host`. Resolves the remote itself before inserting
     /// anything, so a session that has gone since the tree was read creates nothing.
     func attachRemoteSession(host: String, session: String) async -> ControlResponse
+    /// Attach into an open local window, defaulting to the frontmost window after discovery.
+    func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse
 }
 
 /// Routes control commands through a host-provided action seam. The dispatcher owns command parsing and

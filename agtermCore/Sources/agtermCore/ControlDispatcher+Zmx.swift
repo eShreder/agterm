@@ -23,7 +23,7 @@ extension ControlDispatcher {
             guard RemoteSession.isPlain(session) else {
                 return ControlResponse(ok: false, error: "invalid remote session")
             }
-            return await actions.attachRemoteSession(host: host, session: session)
+            return await actions.attachRemoteSession(host: host, session: session, window: request.args?.window?.trimmedOrNil)
         default:
             return dispatchLocalZmxCommand(request)
         }

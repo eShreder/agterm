@@ -106,7 +106,9 @@ SIGTERM use normal process behavior.
 ## tree
 
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
-`id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
+`id`, `name`, `cwd`, `splitCwd` (the split pane's last reported directory, falling back to its restored
+directory, then the primary cwd; omitted without a split or on older servers), `title` (the raw OSC terminal
+title, for example a remote host over SSH, omitted
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
 `realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned and a
@@ -514,7 +516,7 @@ error keeps those names for compatibility.
   roles without restarting either process. Focus follows its terminal; split axis and ratio stay fixed.
   Works when the split is shown or hidden and under zoom/dashboard. Errors when there is no split or a
   surface is not ready. The new primary supplies `tree`'s `cwd`/`title`/`foreground`/`restoreCommand`/
-  `commandWait`; the other side supplies `splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
+  `commandWait`; the other side supplies `splitCwd`/`splitForeground`/`splitRestoreCommand`/`splitCommandWait`.
 - `session scratch [on|off|toggle] [--command CMD] [--target] [--window W]` — a third, full-coverage
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
@@ -852,7 +854,8 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 - `window delete <id>` — keep-at-least-one; deleting the last errors.
 - `window resize <id> --width W --height H` — frame size in points. The window must be open. The size is
   clamped into `[window min size, the display's visible frame]`, so an oversized or under-min request is
-  bounded to fit rather than applied verbatim.
+  bounded to fit rather than applied verbatim. Prints the applied width and height as `W H`; JSON reports
+  `result.width` and `result.height`, rounded to integer points like `window list` geometry.
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.
@@ -1448,8 +1451,11 @@ pane, and be new enough to answer `zmx tree` at all; an older one is refused by 
 half-attached. It also needs `agtermctl` installed by the cask or the Help action: a machine merely
 running agterm has no CLI an ssh command can find, and the read fails with exit 127.
 
-`agtermctl zmx attach HOST SESSION` — open one of those sessions here, marked remote, in the current
-window's current workspace, selected, with the remote session's split when it has one. `SESSION` is the
+`agtermctl zmx attach HOST SESSION [--window W]` opens one of those sessions here, marked remote, in
+the destination window's current workspace, selected, with the remote session's split when it has one.
+`--window` takes a local open window ID, unique prefix, or `active`; omitted, it uses the frontmost window
+after discovery. An invalid or closed destination fails without creating a session. Targeting a background
+window leaves the frontmost window unchanged. `SESSION` is the
 `id` from `zmx tree`, never the name: remote names are editable and repeat across workspaces. Returns the
 new local session's `id`; read `remoteHost` on its tree node. The remote is resolved AGAIN before anything
 is created, so a session that has gone since the listing fails and creates nothing. Everything reported
