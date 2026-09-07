@@ -844,6 +844,16 @@ struct SocketClientTests {
         #expect(output.contains("/main  split cwd: /other"))
     }
 
+    @Test func formatWindowResizeReportsAppliedWidthAndHeight() throws {
+        let response = try JSONDecoder().decode(ControlResponse.self, from: Data(#"{"ok":true,"result":{"id":"w","width":1200,"height":800}}"#.utf8))
+        #expect(SocketClient.formatResponse(response, json: false) == "1200 800")
+        let encoded = SocketClient.formatResponse(response, json: true)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
+        let result = try #require(json["result"] as? [String: Any])
+        #expect(result["width"] as? Int == 1200)
+        #expect(result["height"] as? Int == 800)
+    }
+
     @Test func formatResponseTree() {
         let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: true)
         let workspace = ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])

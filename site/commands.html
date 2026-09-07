@@ -2026,7 +2026,9 @@
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 10px 0 0">
                 Frame size in points. The window must be open. The size is clamped into the window's minimum and the display's visible
                 frame, so an oversized request is bounded rather than applied verbatim. Control-native (the title bar already
-                drags-to-resize).
+                drags-to-resize). Prints the applied width and height as <span style="font-family: &quot;JetBrains Mono&quot;, monospace">W H</span>; JSON reports
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.width</span> and <span style="font-family: &quot;JetBrains Mono&quot;, monospace">result.height</span>, rounded to integer points like
+                <span style="font-family: &quot;JetBrains Mono&quot;, monospace">window list</span> geometry.
               </p>
             </div>
 

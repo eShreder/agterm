@@ -854,7 +854,8 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 - `window delete <id>` — keep-at-least-one; deleting the last errors.
 - `window resize <id> --width W --height H` — frame size in points. The window must be open. The size is
   clamped into `[window min size, the display's visible frame]`, so an oversized or under-min request is
-  bounded to fit rather than applied verbatim.
+  bounded to fit rather than applied verbatim. Prints the applied width and height as `W H`; JSON reports
+  `result.width` and `result.height`, rounded to integer points like `window list` geometry.
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.

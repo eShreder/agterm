@@ -753,6 +753,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   the last reported split cwd to its restored initial cwd, then the primary effective cwd. Omitted without
   a split or on older servers; it is model read-back, not a fresh process query. `title` stays the raw
   primary OSC title; exposing `splitTitle` is deferred.
+- `window.resize` echoes the applied frame size after `setFrame`, rounded to integer points like
+  `window.list` geometry, as `result.width`/`result.height`. Human output is `W H`.
 - Session nodes include foreground/split foreground argv, idle shell basenames, background spec, overlay
   size, pane overlays, split axis, split ratio, split focus, status fields, flag, unseen, restore pins,
   surfaces, `realized`, `backedByZmx`, and `remoteHost`.

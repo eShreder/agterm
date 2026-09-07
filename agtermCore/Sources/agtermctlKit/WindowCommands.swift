@@ -66,7 +66,8 @@ struct Window: ParsableCommand {
     }
 
     struct Resize: RequestCommand {
-        static let configuration = CommandConfiguration(abstract: "Resize a window (frame size in points).")
+        static let configuration = CommandConfiguration(abstract: "Resize a window (frame size in points).",
+            discussion: "Prints the applied width and height as W H after clamping to the window minimum and display bounds.")
         @Argument(help: "Window id, unique prefix, or 'active'.") var id: String = "active"
         @Option(help: "New width in points.") var width: Int
         @Option(help: "New height in points.") var height: Int

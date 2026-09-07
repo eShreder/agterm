@@ -239,6 +239,9 @@ struct SocketClient {
             // payload ever gains a row: a second field belongs under --json, not in a format callers parse.
             return "\(cursor.column)"
         }
+        if let width = response.result?.width, let height = response.result?.height {
+            return "\(width) \(height)"
+        }
         if let ratio = response.result?.ratio {
             // session.resize echoes the applied (clamped) primary-pane fraction, scriptable as a bare number.
             return String(format: "%.3f", ratio)

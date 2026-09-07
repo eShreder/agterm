@@ -105,10 +105,12 @@ extension ControlServer {
     /// errors. Control-native — no GUI surface, the native title bar already drags-to-resize.
     func windowResize(_ target: String?, width: Int, height: Int) -> ControlResponse {
         return resolver.resolveWindowID(target) { id in
-            guard WindowRegistry.shared.resize(id, width: width, height: height) else {
+            guard let size = WindowRegistry.shared.resize(id, width: width, height: height) else {
                 return ControlResponse(ok: false, error: "window not open — window.select it first")
             }
-            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString,
+                                                                  width: Int(size.width.rounded()),
+                                                                  height: Int(size.height.rounded())))
         }
     }
 

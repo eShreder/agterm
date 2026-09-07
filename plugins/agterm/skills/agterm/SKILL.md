@@ -479,6 +479,9 @@ omitted when expanded).
 `toggle`, the id may be omitted so `window minimize on` targets the active window; errors on a full-screen
 window; read back as `minimized` on `window list`).
 
+`window resize` prints the applied width and height as `W H`, after clamping. JSON reports
+`result.width` and `result.height` in integer points, matching `window list` geometry.
+
 **surface** — `surface zoom [show|hide|toggle] [--target surface:<session-id>:left|right|scratch|overlay|overlay-left|overlay-right|quick] [--window W]`
 — zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
 button remains). Omit `--target` to use the active surface;
