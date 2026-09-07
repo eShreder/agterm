@@ -72,6 +72,8 @@ the same of this app, which is the form the remote call runs over there:
 ```bash
 agtermctl zmx tree studio.local
 agtermctl zmx attach studio.local 7c1e4a02-...
+# Place it in a specific open local window.
+agtermctl zmx attach studio.local 7c1e4a02-... --window "$window_id"
 ```
 
 To let the user choose, pipe the listing through the picker:

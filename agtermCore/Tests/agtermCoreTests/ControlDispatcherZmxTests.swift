@@ -332,6 +332,15 @@ struct ControlDispatcherZmxTests {
         #expect(fromFuture.result?.restore?.configured == "mirrored")
     }
 
+    @Test func anOlderAttachHostRefusesExplicitWindowPlacement() async throws {
+        let actions = MockControlActions()
+        let response = try #require(await dispatch(ControlRequest(cmd: .zmxAttach, target: "s1",
+            args: ControlArgs(host: "buildbox", window: "other")), actions))
+        #expect(!response.ok)
+        #expect(response.error == "zmx.attach --window is not supported on this platform")
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func theUnsupportedRefusalNamesTheCommand() {
         // agtermCore is a library the agterm-linux fork consumes, so every Mac-only ControlActions
         // requirement ships a default returning this rather than breaking that build

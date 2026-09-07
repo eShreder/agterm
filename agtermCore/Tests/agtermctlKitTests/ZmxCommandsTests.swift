@@ -8,6 +8,16 @@ import Testing
 /// the point is that the CLI cannot send a kill the server would have to refuse, and that a reader can
 /// tell a closed window's resting state from a leak.
 struct ZmxCommandsTests {
+    @Test func attachCarriesTheLocalWindowSeparatelyFromTheRemoteSession() throws {
+        let attach = try Zmx.Attach.parse(["buildbox", "s1", "--window", "local-window"])
+        let request = try attach.makeRequest()
+        #expect(request.cmd == .zmxAttach)
+        #expect(request.target == "s1")
+        #expect(request.args?.host == "buildbox")
+        #expect(request.args?.window == "local-window")
+        #expect(try JSONDecoder().decode(ControlRequest.self, from: JSONEncoder().encode(request)) == request)
+    }
+
     @Test func treeCarriesItsHostAsAnArgumentNotATarget() throws {
         let tree = try Zmx.Tree.parse(["buildbox"])
 

@@ -1451,8 +1451,11 @@ pane, and be new enough to answer `zmx tree` at all; an older one is refused by 
 half-attached. It also needs `agtermctl` installed by the cask or the Help action: a machine merely
 running agterm has no CLI an ssh command can find, and the read fails with exit 127.
 
-`agtermctl zmx attach HOST SESSION` — open one of those sessions here, marked remote, in the current
-window's current workspace, selected, with the remote session's split when it has one. `SESSION` is the
+`agtermctl zmx attach HOST SESSION [--window W]` opens one of those sessions here, marked remote, in
+the destination window's current workspace, selected, with the remote session's split when it has one.
+`--window` takes a local open window ID, unique prefix, or `active`; omitted, it uses the frontmost window
+after discovery. An invalid or closed destination fails without creating a session. Targeting a background
+window leaves the frontmost window unchanged. `SESSION` is the
 `id` from `zmx tree`, never the name: remote names are editable and repeat across workspaces. Returns the
 new local session's `id`; read `remoteHost` on its tree node. The remote is resolved AGAIN before anything
 is created, so a session that has gone since the listing fails and creates nothing. Everything reported

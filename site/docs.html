@@ -2476,7 +2476,7 @@
               A session running on another Mac that is also running agterm can be opened here, in the sidebar, marked remote.
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx tree [HOST]</span> lists what
               that machine has to offer across <em>every</em> open window, and
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx attach HOST ID</span> opens
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl zmx attach HOST ID [--window W]</span> opens
               one of them, split included. Both need the far side in
               <strong style="color: #e6e1d7">Live sessions</strong> mode, since that is what puts a daemon behind each pane, and both
               run ssh non-interactively — key-based auth has to work for the host already, because a password or host-key prompt is a
@@ -2490,6 +2490,8 @@
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">.zshrc</span> passes this check and still fails here.
               Put <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">IdentityAgent</span> and key settings in
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.ssh/config</span>, which both paths read.
+              Use <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--window</span> to choose an open local window without bringing it forward; otherwise the
+              session opens in the frontmost window after discovery.
             </p>
             <div
               style="

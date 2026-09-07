@@ -595,7 +595,9 @@ without one (the bare form is exactly what the remote call runs on the far side)
 the ids: neither is unique), `context` when set, and per-pane `foreground`; only a session whose every pane
 still has a live daemon is listed, and an empty list does NOT mean the far side is not in live mode -
 `zmx list` reports that · `zmx attach
-HOST SESSION` - open one of them here, marked remote and carrying its split; takes the ID from that
+HOST SESSION [--window W]` - open one of them here, marked remote and carrying its split, in the
+chosen open local window's current workspace (default: frontmost after discovery). A background target
+keeps the frontmost window unchanged; an invalid or closed target fails. Takes the ID from that
 listing, not the name, and resolves the remote again first, so a session that has gone fails instead of
 handing back a fresh shell wearing its name. Closing it here ends only this side's connection and it is
 never restored after a relaunch. Both run ssh non-interactively, so key-based auth must already work, and

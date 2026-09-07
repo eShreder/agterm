@@ -1011,7 +1011,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   pre-model failures leaving no half-built row; ssh itself starts AFTER insertion, so a transport failure
   is an ordinary pane exit on the held path. It matches the
   session by ID ALONE — remote names are mutable and non-unique across workspaces — and panes by role,
-  never array position. The row lands in the frontmost window's current workspace and is selected.
+  never array position. The row is selected in the destination window's current workspace.
+- `zmx.attach --window` resolves an open local destination after discovery, immediately before insertion.
+  Omitted, it uses the then-frontmost window. An explicit invalid or closed window fails without creating
+  a session; it never falls back or raises another window. The old `attachRemoteSession(host:session:)`
+  witness remains callable. Hosts implementing only that form accept untargeted calls and refuse explicit
+  window placement through the new overload's default.
 - The local cwd is this machine's home, not the remote one: libghostty chdirs the ssh process here and a
   path that exists on the far side may not exist locally. The attached shell reports its real cwd through
   the terminal stream.
