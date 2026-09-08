@@ -250,6 +250,14 @@ class TestDigest(Fixture):
         self.assertNotIn("tool", digest)
         self.assertEqual("/tmp/café/worktree", swap.transcript_cwd(entries, "/tmp"))
 
+    def test_pure_text_user_blocks_are_skipped_as_skill_injection(self) -> None:
+        # pins the deliberate skip: a list of only text blocks is a skill body, not the user's words
+        self.assertEqual("", swap.user_text_from_blocks(
+            [{"type": "text", "text": "Base directory for this skill: /x"},
+             {"type": "text", "text": "body"}]))
+        self.assertEqual("keep this", swap.user_text_from_blocks(
+            [{"type": "text", "text": "keep this"}, {"type": "image", "source": {}}]))
+
     def test_final_message_uses_last_completed_agent_message(self) -> None:
         stream = "\n".join(json.dumps({"type": "item.completed",
             "item": {"type": "agent_message", "text": text}}) for text in ["first", "last"])

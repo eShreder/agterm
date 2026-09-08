@@ -417,6 +417,12 @@ def find_session(tree: Any, sid: str) -> dict[str, Any] | None:
 
 
 def busy_reason(node: dict[str, Any], transcript: Path | None, now: float) -> str:
+    """Name why the pane must not be disturbed, empty when nothing says so.
+
+    A conservative activity heuristic, never a proof of idleness, which nothing available can
+    give. An absent status blocks nothing: it is ambiguous, and the Stop hook's --auto-reset
+    clears it the moment the user visits the pane.
+    """
     status, pane = (node.get('status'), node.get('statusPane'))
     if status == 'active' and pane != 'right':
         return 'the left pane reports an agent still working'
@@ -430,6 +436,12 @@ def busy_reason(node: dict[str, Any], transcript: Path | None, now: float) -> st
 
 
 def stamp(path: Path) -> tuple[str, int, int]:
+    """Identify a transcript for comparison after a slow step.
+
+    An unreadable file raises rather than returning zeros: a zero-valued snapshot compares equal
+    to the next unreadable one, reporting a conversation as unchanged exactly when it can no
+    longer be seen.
+    """
     try:
         info = path.stat()
     except OSError as exc:
@@ -438,6 +450,11 @@ def stamp(path: Path) -> tuple[str, int, int]:
 
 
 def final_message(stdout: str) -> str:
+    """The last completed agent message of a codex exec stream.
+
+    codex exec emits no `result` event, so the answer is the last `item.completed` carrying an
+    agent_message rather than a terminal event of its own.
+    """
     message = ''
     for line in stdout.splitlines():
         try:
@@ -453,6 +470,11 @@ def final_message(stdout: str) -> str:
 
 
 def worktree_state(cwd: str) -> str:
+    """Ground the packet's file list in what git shows.
+
+    read_entries drops tool traffic, and tool traffic is where every file path lives, so a
+    transcript-only digest cannot name what the session touched.
+    """
 
     def git(*args: str) -> str:
         try:
@@ -497,10 +519,22 @@ def carry_over(summary: str, current: str, target: str, transcript: Path) -> str
 
 
 def at_shell_prompt(node: dict[str, Any]) -> bool:
+    """The left pane has a shell in front and no program running in it.
+
+    The shell must be SEEN rather than inferred from Claude's absence, which answers true for
+    vim. It still does not prove the prompt accepts input: a builtin like `read` runs inside the
+    shell process.
+    """
     return bool(node.get('foregroundShell')) and (not node.get('foreground'))
 
 
 def transcript_cwd(entries: list[Any], fallback: str) -> str:
+    """The directory CLAUDE was in, not the one the pane's shell sits in.
+
+    Claude moves its transcript to a worktree's project dir while the shell stays at the repo
+    root, so the tree's cwd would ground the packet in the wrong branch and dirty files, and
+    relaunch the replacement there.
+    """
     return next((e.cwd for e in reversed(entries) if e.cwd), '') or fallback
 
 
@@ -537,6 +571,12 @@ def strip_noise(text: str) -> str:
 
 
 def user_text_from_blocks(blocks: list[Any]) -> str:
+    """A list-shaped user turn's own words, empty when it has none.
+
+    Text is taken ONLY when some block is not text. A list of pure text blocks is a skill
+    injection carrying the whole SKILL.md body, and joining those crowds the conversation out
+    of the digest cap.
+    """
     kinds = {str(b.get('type', '')) for b in blocks if isinstance(b, dict)}
     if not kinds - {'text'}:
         return ''
