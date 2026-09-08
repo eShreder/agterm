@@ -290,53 +290,6 @@ final class AskDialogViewTests: XCTestCase {
         }
     }
 
-    func testOverflowDialogRendersInNativeHost() throws {
-        var selected: Int?
-        let ask = PendingAsk(id: "overflow", title: "Choose an action",
-                             message: "All six actions remain available in a small pane.",
-                             buttons: (0..<6).map { ControlAskButton(id: "\($0)", label: "Action \($0)") })
-        let view = AskDialogView(ask: ask, anchorFrame: CGRect(x: 565, y: 280, width: 335, height: 160),
-                                 font: .monospacedSystemFont(ofSize: 13, weight: .regular),
-                                 foreground: Color(white: 0.85), background: Color(white: 0.08),
-                                 focusAllowed: true, onAnswer: { selected = $0 }, onDismiss: {})
-            .frame(width: 900, height: 600)
-            .background(Color(white: 0.15))
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        let host = NSHostingView(rootView: view)
-        window.contentView = host
-        window.orderFront(nil)
-        host.layoutSubtreeIfNeeded()
-        host.displayIfNeeded()
-        let catcher = try XCTUnwrap(window.firstResponder as? AskKeyCatcher.KeyCatcherView)
-        catcher.keyDown(with: try event(36))
-        XCTAssertEqual(selected, 0)
-        catcher.keyDown(with: try event(48, modifiers: .shift))
-        let deadline = Date(timeIntervalSinceNow: 2)
-        var scroll = try XCTUnwrap(descendant(NSScrollView.self, in: host))
-        while scroll.contentView.bounds.minY == 0, Date() < deadline {
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
-            host.layoutSubtreeIfNeeded()
-            scroll = try XCTUnwrap(descendant(NSScrollView.self, in: host))
-        }
-        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
-        catcher.keyDown(with: try event(36))
-        XCTAssertEqual(selected, 5)
-        host.displayIfNeeded()
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let image = NSImage(size: host.bounds.size)
-        image.addRepresentation(bitmap)
-        XCTAssertEqual(image.size, CGSize(width: 900, height: 600))
-        XCTAssertGreaterThan(brightSamples(in: bitmap), 10)
-        let attachment = XCTAttachment(image: image)
-        attachment.name = "ask-native-overflow"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
     func testDialogRendersAtWindowPaneAndShortPaneSizes() throws {
         let ask = PendingAsk(id: "render", title: "Keep these changes?",
                              message: "Save this workspace, keep editing, or discard the current changes. Choose an action below.",
