@@ -37,6 +37,7 @@ its *needs* column, so searching this page for `claude` or `kiro` finds those di
 | [annotate-claude-replies](annotate-claude-replies/) | mark up Claude's answers in revdiff and send the notes back | 0.13.0, revdiff, python3, Claude Code |
 | [annotate-pane-output](annotate-pane-output/) | mark up what the pane just printed in revdiff and send the notes back to whatever is running there | 0.13.0, revdiff, python3 |
 | [backlog-picker](backlog-picker/) | pick one of the repo's written-down deferred items and hand it to the agent in the pane | 0.20.2, python3, Claude Code |
+| [claude-account-swap](claude-account-swap/) | switch the left pane's Claude account with a conversation summary | 0.26.0, python3, jq, Claude Code, Codex CLI, Git |
 | [claude-conversation-picker](claude-conversation-picker/) | pick a past Claude Code conversation by what it was about and resume it in the pane | 0.21.0, python3, Claude Code |
 | [claude-recap](claude-recap/) | one key lists what the Claude Code run in a session was working on | 0.10.0, zsh, jq, Claude Code |
 | [close-tab-when-done](close-tab-when-done/) | arm a tab with a chord and it closes itself when the agent stops replying | 0.22.0, jq, Claude Code |
