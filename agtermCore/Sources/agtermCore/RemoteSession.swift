@@ -84,7 +84,7 @@ public enum RemoteSession {
         return "\(attach); status=$?; printf '%s %s\\n' \(label) \"$status\"; exit \"$status\""
     }
 
-    private static func sshArguments(host: String, connectTimeout: Int, interactive: Bool) -> [String] {
+    static func sshArguments(host: String, connectTimeout: Int, interactive: Bool) -> [String] {
         ["ssh", interactive ? "-tt" : "-T",
          "-o", "BatchMode=yes",
          "-o", "ConnectTimeout=\(connectTimeout)",
@@ -92,7 +92,7 @@ public enum RemoteSession {
     }
 
     /// Refused rather than escaped, and a leading `-` with it: ssh would read that as an option.
-    private static func validate(host: String) throws {
+    static func validate(host: String) throws {
         guard !host.isEmpty else { throw InvocationError.emptyHost }
         guard isPlain(host), !host.hasPrefix("-") else { throw InvocationError.invalidHost }
     }

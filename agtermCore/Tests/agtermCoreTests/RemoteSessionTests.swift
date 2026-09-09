@@ -204,6 +204,93 @@ struct RemoteSessionTests {
             try RemoteSession.attachCommand(host: "buildbox", endpoint: broken, daemon: daemon)
         }
     }
+
+    // MARK: - hosts that run zmx without agterm
+
+    @Test func hostAttachRunsZmxAttachWithTheGuardByDefault() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        _ = try fake.installZmx()
+
+        let run = try fake.runRemote(try RemoteSession.hostAttachCommand(host: "devbox", name: "api", create: false),
+                                     exporting: ["ZMX_DIR": "/tmp/the-hosts-own"])
+
+        #expect(run.status == 0)
+        #expect(try fake.calls().first == ["attach", "api", "/bin/sh", "-c",
+                                           "printf '%s\\n' 'agterm: remote session is gone'; exit 1"])
+        #expect(try fake.recordedZmxSessionEnv() == "session=[] prefix=[] nodetach=[1]")
+        #expect(try fake.recordedZmxDir() == "/tmp/the-hosts-own", "the far side's own socket directory is left alone")
+    }
+
+    @Test func hostAttachWithCreateDropsTheGuardAndRunsTheCommand() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        _ = try fake.installZmx()
+
+        let run = try fake.runRemote(try RemoteSession.hostAttachCommand(
+            host: "devbox", name: "api", create: true, command: "cd ~/api && claude"))
+
+        #expect(run.status == 0)
+        #expect(try fake.calls().first == ["attach", "api", "/bin/sh", "-c", "cd ~/api && claude"])
+    }
+
+    @Test func hostAttachWithCreateAndNoCommandStartsTheLoginShell() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        _ = try fake.installZmx()
+
+        _ = try fake.runRemote(try RemoteSession.hostAttachCommand(host: "devbox", name: "api", create: true))
+
+        #expect(try fake.calls().first == ["attach", "api"])
+    }
+
+    @Test func hostListAndKillRunTheFarSidesOwnZmx() throws {
+        let fake = try FakeRemote()
+        defer { fake.cleanUp() }
+        _ = try fake.installZmx()
+
+        _ = try fake.runRemote(try RemoteSession.hostListCommand(host: "devbox"))
+        _ = try fake.runRemote(try RemoteSession.hostKillCommand(host: "devbox", name: "api"))
+
+        #expect(try fake.calls() == [["list"], ["kill", "api"]])
+    }
+
+    @Test func hostCommandsWidenPathToTheUserInstallDirectories() throws {
+        let remote = try #require(try RemoteSession.hostListCommand(host: "devbox").last)
+        for directory in ["$HOME/.local/bin", "$HOME/bin", "/usr/local/bin", "/opt/homebrew/bin"] {
+            #expect(remote.contains(directory))
+        }
+    }
+
+    @Test func hostListIsNonInteractiveAndHostAttachForcesAPty() throws {
+        #expect(try RemoteSession.hostListCommand(host: "devbox", connectTimeout: 9).prefix(7)
+            == ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=9", "devbox"])
+        #expect(try RemoteSession.hostAttachCommand(host: "devbox", name: "api", create: false).prefix(7)
+            == ["ssh", "-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "devbox"])
+    }
+
+    @Test(arguments: ["", "-rf", "a/b", "a b", "a\nb", "a\u{7F}"])
+    func hostCommandsRefuseAnUnsafeSessionName(_ name: String) {
+        #expect(throws: RemoteSession.InvocationError.invalidSession) {
+            try RemoteSession.hostAttachCommand(host: "devbox", name: name, create: true)
+        }
+        #expect(throws: RemoteSession.InvocationError.invalidSession) {
+            try RemoteSession.hostKillCommand(host: "devbox", name: name)
+        }
+        #expect(!RemoteSession.isSessionName(name))
+    }
+
+    @Test(arguments: ["", "-oProxyCommand=x", "dev box"])
+    func hostCommandsRefuseAnUnsafeHost(_ host: String) {
+        #expect(throws: (any Error).self) { try RemoteSession.hostListCommand(host: host) }
+    }
+
+    @Test func hostAttachPaneCommandReportsTheDisconnectAndKeepsSshsStatus() throws {
+        let line = try RemoteSession.hostAttachPaneCommand(host: "devbox", name: "api", create: false)
+        #expect(line.hasPrefix("'ssh' '-tt'"))
+        #expect(line.contains("'agterm: api on devbox disconnected, exit'"))
+        #expect(line.hasSuffix("exit \"$status\""))
+    }
 }
 
 /// Runs the remote half of an invocation through `/bin/sh` against recording stand-ins, so a quoting or
