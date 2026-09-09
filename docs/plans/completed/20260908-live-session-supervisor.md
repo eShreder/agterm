@@ -78,7 +78,7 @@ reported as such on the tree.
   responsible pid rather than assuming it equals its pid.
 - **differential test** for the client seam: environment, cwd, initial pty size and login-shell
   behavior of a pane started through the client versus today's bare `zmx attach`, including a custom
-  `ZDOTDIR`, must match
+  `ZDOTDIR`, must match; runtime-generated differences are measured and bounded in task 6
 - no XCUITest: nothing here is chrome
 
 ## Progress Tracking
@@ -102,8 +102,8 @@ execs plain `zmx attach <name>`, joining the daemon    │ poll `zmx list` for t
 Decisions, each answering a review finding:
 
 - **The client is the pane command; agterm never waits.** Waiting happens inside the pane after
-  libghostty has composed the environment, so the UI never blocks and the daemon gets exactly the
-  environment, cwd and winsize the pane itself has. `ZmxSupport` renders the pane command from a
+  libghostty has composed the environment, so the UI never blocks and the daemon gets the
+  environment, cwd and winsize captured by the client (see task 6 for the Foundation cache exception). `ZmxSupport` renders the pane command from a
   structured argv, never by splitting a rendered string; the `-lic` replay script and its creation-only
   semantics are preserved as the trailing argv the host uses for creation.
 - **Ensure is idempotent and host-side.** The host answers `existing` for a daemon already in
@@ -120,8 +120,8 @@ Decisions, each answering a review finding:
   forked, with bounded escalation. Re-run mode is unaffected: `wrapsLocally` wraps active Live mode only.
 - **One root owns the endpoint.** The host holds an exclusive `flock` on `session-host.lock` for its
   lifetime, the same pattern as `ControlServer`. A client that cannot connect takes `session-host.spawn.lock`,
-  re-checks, unlinks the SOCKET only when nobody holds the owner lock, spawns the host with disclaim, waits
-  for the handshake, and releases. Lock files are never unlinked, only closed: a waiter holding the old
+  re-checks and probes the owner lock, spawns the host with disclaim only when it is free, waits
+  for the handshake, and releases. The host removes a stale socket after acquiring its lifetime lock. Lock files are never unlinked, only closed: a waiter holding the old
   inode while another client creates and locks a replacement inode would defeat the singleton. Only the
   socket and pidfile are removed, and only by the owner while it still holds its lock. Concurrent clients
   yield one root. A busy socket is never treated as a dead owner, and a stale pidfile never authorizes a
@@ -143,6 +143,9 @@ Decisions, each answering a review finding:
   write and overall deadlines on both sides; readiness polls `zmx list` every 100 ms up to a bounded
   deadline while draining the temporary pty and having passed the pane's winsize. A live leader pid is
   process readiness, not a shell prompt, and is documented as such.
+- **The host has its own subdirectory.** All host files are under `<ZMX_DIR>/session-host/` through
+  `SessionHost.paths`. Stock zmx probes every Unix socket directly in `ZMX_DIR`, so placing the host
+  endpoint there would make readiness and inventory inspect the host as if it were a zmx daemon.
 - **Lifecycle.** One host per state directory. Fresh shells and Re-run launches leave a live host alone;
   killing it would orphan daemons another instance may still be serving. Host death is not repaired:
   a later ensure spawns a fresh host for future daemons and the tree reports the old ones. `stop` exists
@@ -161,11 +164,13 @@ Package layout in `agtermCore`:
   `responsibility_spawnattrs_setdisclaim` and `responsibility_get_pid_responsible_for_pid`,
   `isAvailable`, `spawnDisclaimed(executable:argv:env:)`, `responsibleProcess(of:)`. Products for both
   the app and the helper. Compiles to a stub with `isAvailable == false` on non-Darwin.
-- `SessionHostTrampoline` — C target: `sh_forkpty_exec(argv, envp, cwd, winsize, &master) -> pid`,
-  the only code that runs between `forkpty` and `execve`.
+- `SessionHostTrampoline` — C target: `sh_forkpty_exec(argv, envp, cwd, winsize, &master, &execError) -> pid`,
+  the only code that runs between `forkpty` and `execve`. The parent polls `execError` for a native errno
+  from a child setup/exec failure; EOF alone does not establish daemon readiness.
 - `SessionHostRuntime` — Darwin-only library target holding the host and client logic, sockets, locks
   and pty handling, depending on `agtermCore` for the protocol and `ZmxListParser` and on the two targets
   above; this is what the tests import, since `agtermCoreTests` depends on `agtermCore` alone.
+  `PTYProcess` prepares C buffers before the trampoline and returns the PID and two owned descriptors.
 - `agterm-session-host` — thin Swift executable over `SessionHostRuntime`: `host <socketDir>` and
   `client <name> -- <argv>` modes.
 - Every Darwin-only target, dependency and entry point is conditional in `Package.swift`, so the
@@ -204,21 +209,21 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
 - Create: `agtermCore/Sources/agtermCore/SessionHost.swift`
 - Create: `agtermCore/Tests/agtermCoreTests/SessionHostTests.swift`
 
-- [ ] write failing tests for `hello`, `ensure`, `ok` and `error` round-tripping through JSON, including
+- [x] write failing tests for `hello`, `ensure`, `ok` and `error` round-tripping through JSON, including
       argv with spaces, an env value with a newline, and an oversized frame rejected at the 64 KiB cap
-- [ ] write failing tests for `SessionHost.paths(socketDirectory:)` (socket, owner lock, spawn lock,
+- [x] write failing tests for `SessionHost.paths(socketDirectory:)` (socket, owner lock, spawn lock,
       pidfile, log) and the 104-byte socket-path limit surfacing as a `Rejection`
-- [ ] write failing tests for `SessionHost.leaderPid(in:name:)` over `ZmxListParser`: present with pid,
+- [x] write failing tests for `SessionHost.leaderPid(in:name:)` over `ZmxListParser`: present with pid,
       present without, absent, unparseable
-- [ ] write failing tests for `SessionHost.ClientOutcome.decide(phase:reply:)`: `existing` and
+- [x] write failing tests for `SessionHost.ClientOutcome.decide(phase:reply:)`: `existing` and
       `created` yield plain attach; no host, handshake timeout, handshake declined and
       `error.stage == before` yield full attach with payload; `error.stage == started`, a lost reply and
       a deadline after dispatch yield plain attach plus the diagnostic line
-- [ ] write failing tests for `SessionHost.handshakeAccepts(local:remote:)`: same bundle id, canonical
+- [x] write failing tests for `SessionHost.handshakeAccepts(local:remote:)`: same bundle id, canonical
       location and protocol accepts, including a different app version; other bundle id, other location
       (a `/tmp` versus `/private/tmp` pair canonicalizes to the same and accepts), or a newer protocol
       declines
-- [ ] implement to make them pass; run `swift test --filter SessionHostTests` - must pass before task 2
+- [x] implement to make them pass; run `swift test --filter SessionHostTests` - must pass before task 2
 
 ### Task 2: Darwin-only responsibility SPI target
 
@@ -227,81 +232,105 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
 - Modify: `agtermCore/Package.swift`
 - Create: `agtermTests/ResponsibilitySPITests.swift`
 
-- [ ] add the `AgtermResponsibility` library target and product; on non-Darwin it compiles to
+- [x] add the `AgtermResponsibility` library target and product; on non-Darwin it compiles to
       `isAvailable == false`
-- [ ] write a failing hosted test that reads the test host's own responsible pid, spawns `/bin/sleep`
+- [x] write a failing hosted test that reads the test host's own responsible pid, spawns `/bin/sleep`
       plain and disclaimed, and asserts plain resolves to that pid while disclaimed resolves to itself;
       skip when `isAvailable` is false, FAIL on any other outcome
-- [ ] write a failing test that a missing symbol makes `spawnDisclaimed` throw `.unavailable` rather
+- [x] write a failing test that a missing symbol makes `spawnDisclaimed` throw `.unavailable` rather
       than spawn without the attribute
-- [ ] implement `dlsym` lookups, `spawnDisclaimed` via `posix_spawn`, and `responsibleProcess(of:)`
-- [ ] run `make test-app` scoped to `agtermTests/ResponsibilitySPITests` - must pass before task 3
+- [x] implement `dlsym` lookups, `spawnDisclaimed` via `posix_spawn`, and `responsibleProcess(of:)`
+- [x] run `make test-app` scoped to `agtermTests/ResponsibilitySPITests` - must pass before task 3
 
 ### Task 3: C fork/exec trampoline and the runtime test target
 
 **Files:**
 - Create: `agtermCore/Sources/SessionHostTrampoline/include/trampoline.h`
 - Create: `agtermCore/Sources/SessionHostTrampoline/trampoline.c`
+- Create: `agtermCore/Sources/SessionHostRuntime/PTYProcess.swift`
 - Modify: `agtermCore/Package.swift`
 - Create: `agtermCore/Tests/SessionHostRuntimeTests/SessionHostTrampolineTests.swift`
 
-- [ ] add the Darwin-only `SessionHostTrampoline` C target, the Darwin-only `SessionHostRuntime`
+- [x] add the Darwin-only `SessionHostTrampoline` C target, the Darwin-only `SessionHostRuntime`
       library target depending on it, `AgtermResponsibility` and `agtermCore`, and a Darwin-only
       `SessionHostRuntimeTests` test target depending on `SessionHostRuntime`; all conditional so the
       Linux consumer and the existing `agtermCoreTests` path are unchanged
 
-- [ ] write failing tests: exec of `/bin/echo` with a given env and cwd reproduces both on the pty;
+- [x] write failing tests: exec of `/bin/echo` with a given env and cwd reproduces both on the pty;
       a missing executable returns a failure the parent can read; winsize is applied before exec
-- [ ] implement `sh_forkpty_exec`: `forkpty`, `chdir`, `execve`, `_exit(127)`; no allocation after fork
-- [ ] run `swift test --filter SessionHostTrampolineTests` - must pass before task 4
+- [x] implement `sh_forkpty_exec`: `forkpty`, `chdir`, `execve`, `_exit(127)`; no allocation after fork;
+      return close-on-exec PTY/error descriptors so the parent can poll setup failures without blocking
+- [x] run `swift test --filter SessionHostTrampolineTests` - must pass before task 4
 
 ### Task 4: The host mode
 
 **Files:**
 - Create: `agtermCore/Sources/SessionHostRuntime/Host.swift`
+- Create: `agtermCore/Sources/SessionHostRuntime/HostBackend.swift`
+- Create: `agtermCore/Sources/SessionHostRuntime/HostIdentity.swift`
+- Create: `agtermCore/Sources/SessionHostRuntime/HostSocket.swift`
 - Create: `agtermCore/Sources/agterm-session-host/main.swift`
 - Modify: `agtermCore/Package.swift`
+- Modify: `agtermCore/Sources/agtermCore/SessionHost.swift`
+- Modify: `agtermCore/Tests/agtermCoreTests/SessionHostTests.swift`
 - Create: `agtermCore/Tests/SessionHostRuntimeTests/SessionHostServerTests.swift`
 
-- [ ] add the Darwin-only `agterm-session-host` executable target and product as a thin shell over
+- [x] add the Darwin-only `agterm-session-host` executable target and product as a thin shell over
       `SessionHostRuntime`
-- [ ] write failing tests for `Host.handle(ensure:)` with injected spawner and lister: daemon already
+- [x] write failing tests for `Host.handle(ensure:)` with injected spawner and lister: daemon already
       listed yields `existing` with no spawn; leader appears on the second poll yields `created`; leader
       never appears yields `error(started)` after the deadline and terminates only the forked client
       pid with bounded escalation; a client that exits early yields `error(started)`; a fast
       side-effecting creation command that finishes before the poll is reported, not re-run
-- [ ] write failing tests for framing: malformed, oversized, stalled peer past the deadline, disconnect
+      Startup exceptions without proof that execution never began are `started`, not permission to replay.
+- [x] write failing tests for framing: malformed, oversized, stalled peer past the deadline, disconnect
       mid-request; each closes that connection only
-- [ ] write a failing test that `stop` refuses while any rooted daemon is alive, refuses when the
+- [x] write a failing test that `stop` refuses while any rooted daemon is alive, refuses when the
       inventory cannot be read, and otherwise removes socket and pidfile while leaving both lock files
       in place; then a contending client starts a replacement host against the same lock inode
-- [ ] write a failing test that a daemon and shell created through the host hold none of the host's
+      Resolve and verify the shell's zmx parent: the shell may have adopted a different responsibility root.
+- [x] write a failing test that a daemon and shell created through the host hold none of the host's
       descriptors: kill the host, confirm the lock and listener are free, confirm a new host can start
-- [ ] implement: `setsid`, stdio to `/dev/null`, log to `session-host.log`, take the owner `flock`,
+- [x] implement: `setsid`, stdio to `/dev/null`, log to `session-host.log`, take the owner `flock`,
       owner-only socket dir and socket, pidfile, handshake tied to the peer, one request per connection,
       readiness loop draining the temporary pty; every host-private descriptor `FD_CLOEXEC`
-- [ ] run `swift test --filter SessionHostServerTests` - must pass before task 5
+- [x] run `swift test --filter SessionHostServerTests` - must pass before task 5
 
 ### Task 5: The client mode and its ensure-or-spawn
 
 **Files:**
 - Create: `agtermCore/Sources/SessionHostRuntime/Client.swift`
+- Create: `agtermCore/Sources/SessionHostRuntime/ClientConnector.swift`
+- Modify: `agtermCore/Sources/SessionHostRuntime/HostSocket.swift`
+- Modify: `agtermCore/Sources/agterm-session-host/main.swift`
+- Create: `agtermCore/Tests/SessionHostRuntimeTests/SessionHostClientTests.swift`
 - Modify: `agtermCore/Tests/SessionHostRuntimeTests/SessionHostServerTests.swift`
 - Create: `agtermTests/SessionHostClientTests.swift`
 
-- [ ] write failing unit tests for `Client.run(name:argv:)` against a fake host: `existing` and
+- [x] write failing unit tests for `Client.run(name:argv:)` against a fake host: `existing` and
       `created` exec plain attach; no host, handshake timeout, handshake declined and `error(before)`
       exec the payload attach without touching the host further; `error(started)`, lost reply and
       post-dispatch deadline exec plain attach after writing the diagnostic line; a fast side-effecting
       creation command runs at most once across a lost reply
-- [ ] write a failing test that the client resolves its own bundle location from the process image with
+- [x] write a failing test that the client resolves its own bundle location from the process image with
       a dash-prefixed `argv[0]`, and that the endpoint comes from the pane's `ZMX_DIR`
-- [ ] write failing hosted tests for ensure-or-spawn in an isolated state dir: no host yields one
+- [x] write failing hosted tests for ensure-or-spawn in an isolated state dir: no host yields one
       disclaimed host; two clients racing yield one host; owner lock held but socket not listening is
       not treated as dead; a stale pidfile with a dead pid never signals anything; the spawned host's
       handshake pid resolves to itself through `responsibleProcess(of:)`
-- [ ] implement the client: capture `environ`, cwd and `TIOCGWINSZ`, ensure host, send, decide, `execve`
-- [ ] run both test classes - must pass before task 6
+- [x] implement the client: capture `environ`, cwd and `TIOCGWINSZ`, ensure host, send, decide, `execve`
+- [x] run both test classes - must pass before task 6
+
+Implementation notes: the client probes the owner lock but leaves stale socket removal to the host,
+which already removes it only after acquiring its lifetime lock. Startup is bounded to 5 s,
+handshake to 2 s, and the ensure exchange to 12 s for the host's 10 s creation budget. A client
+without a readable terminal size uses 24 rows and 80 columns. Hosted fixtures initially copied the helper
+built by the package tests; task 7 switches them to the test host bundle. No additional app
+dependency is needed.
+
+Validated: 29 client/host package tests, five isolated hosted client tests, and `make lint`.
+The hosted tests also verify environment, physical cwd and 43×132 terminal size, and assert
+that fixture hosts exit during cleanup.
 
 ### Task 6: Pane command and the seam in agterm
 
@@ -310,17 +339,39 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
 - Modify: `agterm/Ghostty/ZmxLaunch.swift`
 - Modify: `agtermCore/Tests/agtermCoreTests/ZmxSupportTests.swift`
 - Modify: `agtermTests/ZmxLaunchTests.swift`
+- Modify: `agtermTests/LaunchSeedTests.swift` (configuration initializer)
+- Modify: `agtermTests/SurfaceFactorySeedTests.swift` (configuration initializer)
+- Create: `agtermTests/SessionHostSeamTests.swift`
 
-- [ ] write failing tests that `ZmxSupport.attachCommand` renders `<helper> client <name> -- <zmx> attach
+- [x] write failing tests that `ZmxSupport.attachCommand` renders `<helper> client <name> -- <zmx> attach
       <name> [shell -lic script]` from a structured argv, preserving the replay script and the
       creation-only payload exactly as today
-- [ ] write a failing test that with the helper absent from the bundle the rendered command is today's
+- [x] write a failing test that with the helper absent from the bundle the rendered command is today's
       bare attach, and that a Re-run launch never renders the client at all
-- [ ] implement: structured attach argv, helper path resolution beside `ZmxLaunch.executablePath` with
+- [x] implement: structured attach argv, helper path resolution beside `ZmxLaunch.executablePath` with
       the same `AGTERM_*_PATH` Debug override, rendering through `shellQuotedLine`
-- [ ] write the differential hosted test: environment, cwd, initial winsize and login-shell behavior
+- [x] write the differential hosted test: environment, cwd, initial winsize and login-shell behavior
       of a pane through the client versus bare attach, with a custom `ZDOTDIR`
-- [ ] run the touched classes - must pass before task 7
+- [x] run the touched classes - must pass before task 7
+
+Implementation notes: `Configuration` now takes `executablePath` instead of a rendered `command`;
+`attachArguments` and the bare `command` are derived from that path and the daemon name.
+`Inputs.sessionHostExecutablePath` defaults to nil, and only an absolute executable helper is
+carried into configuration. `ZmxLaunch` supplies the bundled helper path or the Debug-only
+`AGTERM_SESSION_HOST_PATH` override. No command string is split.
+
+The differential uses real `GhosttySurfaceView` surfaces for plain login shells and creation
+payloads with a custom `ZDOTDIR`. Both arms match on cwd, initial winsize, login/interactive
+options and zsh startup markers. A prestarted host with an older environment receives the
+new pane environment. Full environment comparison excludes per-surface IDs and separately
+checks `__CF_USER_TEXT_ENCODING`: loading Foundation changes its UID field from `0x0` to the
+current UID (`0x1F6` on this machine), while the encoding fields match. A standalone C probe
+reproduced that change using only `dlopen(Foundation)`, before any client logic. This is a
+measured exception to byte-for-byte environment equality, not an omitted comparison.
+
+Validated: 17 `ZmxSupportTests`, 12 `LaunchSeedTests`, 13 `SurfaceFactorySeedTests`,
+12 `ZmxLaunchTests`, two `SessionHostSeamTests`, strict lint and whitespace checks.
+Final process inspection found no fixture hosts, clients or daemons remaining.
 
 ### Task 7: Bundling, signing and release
 
@@ -328,15 +379,38 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
 - Modify: `project.yml`
 - Modify: `scripts/release.sh`
 - Modify: `.github/workflows/ci.yml`
+- Modify: `.claude/rules/ci.md`
+- Modify: `.claude/rules/release.md`
+- Modify: `agtermTests/SessionHostClientTests.swift`
+- Modify: `agtermTests/SessionHostSeamTests.swift`
 
-- [ ] build the `agterm-session-host` product beside `agtermctl` in the "Bundle helper executables"
+- [x] build the `agterm-session-host` product beside `agtermctl` in the "Bundle helper executables"
       phase, copy to `Contents/MacOS/agterm-session-host`, codesign `--options runtime`, no entitlements
-- [ ] add the helper to both loops in `scripts/release.sh` that re-sign and check helpers
-- [ ] add the helper to CI's helper entitlement assertion
-- [ ] on a `scripts/build.sh` output, which is ad-hoc signed: verify the runtime flag and no
+- [x] add the helper to both loops in `scripts/release.sh` that re-sign and check helpers
+- [x] add the helper to CI's helper entitlement assertion
+- [x] on a `scripts/build.sh` output, which is ad-hoc signed: verify the runtime flag and no
       entitlements on the helper
-- [ ] on a `scripts/release.sh` output: verify Developer ID identity, runtime flag, secure timestamp
-      and no entitlements on the helper, since only that path produces the notarizable artifact
+- [x] produce a release-signed bundle WITHOUT running `scripts/release.sh`, which rewrites plugin
+      versions and submits for notarization: build Release in the worktree, then apply the script's own
+      inside-out timestamped `codesign` sequence by hand with the Developer ID identity present in the
+      keychain; the first signing attempt may pause on keychain authentication, which needs Eugene
+- [x] on that bundle: verify Developer ID identity, runtime flag, secure timestamp and no entitlements
+      on the helper; task 9 uses this bundle
+
+Validated: `scripts/build.sh` succeeded using the matching staged libghostty and zmx artifacts.
+All three bundled helpers have valid ad-hoc signatures, hardened runtime and no entitlements.
+Both hosted fixture classes now copy the helper from `Bundle.main/Contents/MacOS`; all seven
+tests passed with the old SwiftPM debug helper temporarily moved aside and restored afterwards.
+The package server fixture retains its SwiftPM-built helper. Strict lint, release script syntax
+and whitespace checks passed; no fixture processes remained.
+
+The separate Developer ID signed copy for task 9 is
+`build/session-host-release-task7/agterm.app` in this worktree. Manual inside-out signing used
+`Developer ID Application: Brave Elk LLC (H7K73622CK)` with secure timestamps on every executable.
+All helpers have no entitlements; the outer app has exactly the shipping entitlement set and
+passes `codesign --verify --deep --strict`. No keychain interaction was needed.
+`scripts/release.sh` was not run, and the signed copy was not launched or submitted for notarization.
+Signature evidence: `/tmp/session-host-task7-signatures.log`.
 
 ### Task 8: Tree read-back of attribution, per pane
 
@@ -348,51 +422,116 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
 - Modify: `agtermCore/Sources/agtermctlKit/SocketClient.swift`
 - Modify: `agtermCore/Tests/agtermCoreTests/AppStoreTreeProjectionTests.swift`
 - Modify: `agtermTests/ControlServerZmxTests.swift`
+- Modify: `agtermCore/Sources/agtermCore/SessionHost.swift`
+- Modify: `agterm/Ghostty/ZmxForegroundResolver.swift`
+- Modify: `agtermCore/Tests/agtermCoreTests/SessionHostTests.swift`
+- Modify: `agtermCore/Tests/agtermctlKitTests/SocketClientTests.swift`
+- Modify: `agtermTests/SessionHostClientTests.swift` (shared fixture)
 
-- [ ] write failing projection tests for `liveAttribution` and `splitLiveAttribution`: absent for
+- [x] write failing projection tests for `liveAttribution` and `splitLiveAttribution`: absent for
       non-Live and remote sessions; `supervisor`, `app`, `orphaned`, `unknown` each; a hidden split
       still reported; pane identity followed through swap and promotion
-- [ ] add the two fields and `SessionHost.classify(leader:responsible:hostPid:appPid:)`, where
+- [x] add the two fields and `SessionHost.classify(leader:responsible:hostPid:appPid:)`, where
       `responsible == leader` is `orphaned`, `responsible == hostPid` is `supervisor`,
       `responsible == appPid` is `app`, a responsible pid positively identified as dead is `orphaned`,
       a failed or absent lookup is `unknown`, and a live responsible pid that is none of those is
       `unknown`, never `orphaned`
-- [ ] wire one leader snapshot per `buildTree` in `ControlServer.swift` through
+- [x] wire one leader snapshot per `buildTree` in `ControlServer.swift` through
       `ZmxClient.sessionLeaderPIDs` and `AgtermResponsibility.responsibleProcess(of:)`, probing each
       unique leader once, so the fields appear on every tree read and not only the zmx handlers
-- [ ] print both in the human tree beside the existing per-pane detail, only when present
-- [ ] write a failing hosted test: a pane through the client reads `supervisor`; after the host is
+- [x] print both in the human tree beside the existing per-pane detail, only when present
+- [x] write a failing hosted test: a pane through the client reads `supervisor`; after the host is
       killed it reads `orphaned`; a bare-attach pane created this launch reads `app`
-- [ ] run the touched classes - must pass before task 9
+- [x] run the touched classes - must pass before task 9
+
+Implementation notes: the classifier receives `ResponsibleProcess.live(pid)`, `.dead` or
+`.unknown` so host-free code does not confuse an absent lookup with a confirmed dead process.
+The app confirms liveness with `kill(pid, 0)`; only ESRCH becomes `.dead`. The optional string
+fields preserve decoding and initializer compatibility. Projection follows each local wrapped
+pane identity, including hidden splits; absent readings become `unknown`.
+
+`buildTree` takes a fresh `ZmxClient.sessionLeaderPIDs` map and shares it with the foreground
+resolver, avoiding its former second listing. A failed map clears stale foreground leaders.
+Responsibility results, including failures, are memoized only within the current tree build.
+The host PID is read from the endpoint's `SessionHost.paths`, checked against the sibling helper
+process image and verified as its own responsibility root. Readback never takes the owner lock.
+A stale PID naming another executable is rejected. No host connection or spawn occurs on reads.
+
+Validated: 120 host-free tests across SessionHostTests, AppStoreTreeProjectionTests and
+SocketClientTests; 57 hosted tests across ControlServerZmxTests, ZmxForegroundResolverTests
+and SessionHostClientTests; strict lint and whitespace checks. The real client/bare fixture
+proved `supervisor` to `orphaned` after host death while the bare pane remained `app`, using
+the measured test process responsibility root as its app PID. No fixture processes remained.
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] in an isolated Release-signed instance with Live mode: create a pane, tree reads `supervisor`,
+- [x] in an isolated Release-signed instance with Live mode: create a pane, tree reads `supervisor`,
       quit, relaunch, same pane still `supervisor`, a new command in it resolves to the host, and a real
       AVFoundation microphone request from inside it is charged to the app bundle after the restart —
       this is the first grant test of the production helper, not the earlier C fixture
-- [ ] a pane whose daemon predates the host reads `app` this launch and `orphaned` after a restart
-- [ ] a daemon that dies after the launch inventory and before its surface is realized, primary and
+- [x] a pane whose daemon predates the host reads `app` this launch and `orphaned` after a restart
+- [x] a daemon that dies after the launch inventory and before its surface is realized, primary and
       split, is recreated through the host rather than by a bare attach
-- [ ] kill the host while a pane it created stays alive: the pane keeps running, the tree reads
+- [x] kill the host while a pane it created stays alive: the pane keeps running, the tree reads
       `orphaned` for it, and the next new pane gets a replacement host
-- [ ] `AGTERM_UITEST_ENABLE_ZMX` unset spawns no host and no client request
-- [ ] a remote session has no attribution fields and made no host request; `agtermctl zmx tree --json`
+- [x] `AGTERM_UITEST_ENABLE_ZMX` unset spawns no host and no client request
+- [x] a remote session has no attribution fields and made no host request; `agtermctl zmx tree --json`
       on the isolated socket still lists a host-created daemon as attachable
-- [ ] run full suites once: `cd agtermCore && swift test`, `make test-app`, `make lint`
+- [x] run full suites once: `cd agtermCore && swift test`, `make test-app`, `make lint`
+
+Acceptance evidence (2026-09-09, HEAD `31200c59`): rebuilt Release and manually signed
+`build/session-host-release-task9/agterm.app` with Developer ID, runtime and secure timestamps.
+No release script, notarization or deployed app was used.
+
+- Main state `/tmp/ag9dolx7a_v`: app `16067` then `19569`, persistent host `16093`.
+  The restored pane stayed `supervisor`; post-restart command `20799` resolved to `16093`.
+  AVFoundation requester `20808` returned `granted=true`. TCC logged its responsible process
+  as the production helper and `AUTHREQ_SUBJECT ... subject=com.umputun.agterm`. The existing
+  allowed bundle row was used; no helper/requester row or new user dialog was needed.
+- Removing host `16093` left the same shell/daemon alive and the old pane `orphaned`.
+  A new pane created replacement host `23501` and read `supervisor`.
+- Legacy state `/tmp/ag9h2jzvk23`: a separately signed helper-absent fixture created a bare
+  daemon under app `24098` and read `app`. After adding the helper and relaunching as
+  `25085`, the same legacy pane read `orphaned`.
+- UI-test state `/tmp/ag9_1tu9tyi`, app `21414`, had the UI-test sentinel but no Live opt-in:
+  no host directory, no wrapper and no attribution fields.
+- Remote state `/tmp/ag9e1maihsm`, app `26824`, used a private local SSH shim pointing at
+  the main fixture's existing daemon. Discovery and the real remote-session creation path
+  ran; the attacher remained live, the source showed two clients, and the remote instance
+  had no host directory or attribution fields. This tests the app boundary, not an external
+  network connection. The isolated `zmx tree --json` offered the host-created source.
+- Added `agtermTests/SessionHostAcceptanceTests.swift`: primary and split surfaces are
+  held at zero size after inventory, their daemon is removed, and realization creates a new
+  leader under the same host. The fixture first releases its original attach client so that
+  an unfinished initial ensure cannot race the new surface and invalidate the experiment.
+- Full gates ran exactly once each: `swift test` passed 3,148 tests; `make test-app` passed
+  606 tests; `make lint` passed. No boxes were blocked or skipped.
+
+All manually launched instances, hosts, daemons and commands were stopped, and a final
+process scan found no acceptance fixtures remaining. Detailed PIDs and saved trees are in
+`/tmp/agt9-record.json`; TCC evidence is `/tmp/agt9-tcc.log`; full gate logs are
+`/tmp/session-host-task9-full-{core,app,lint}.log`.
 
 ### Task 10: Update documentation
 
-- [ ] rewrite the App Data section of `docs/troubleshooting.md`: the loss is process attribution; the
+- [x] rewrite the App Data section of `docs/troubleshooting.md`: the loss is process attribution; the
       supervisor keeps new Live panes attributed to agterm, verified for the microphone; App Data is
       expected to follow but keeps Full Disk Access as the documented remedy for `orphaned` and `app`
       panes until tested; `liveAttribution` on the tree says which panes are which
-- [ ] `git rm docs/backlog/live-session-panes-lose-responsible-app-attribution.md` in the same commit
-- [ ] document the two fields in `site/commands.html` and `plugins/agterm/skills/agterm/`, and add one
+- [x] remove `docs/backlog/live-session-panes-lose-responsible-app-attribution.md` with plain `rm`;
+      Claude stages the deletion in the reviewed commit
+- [x] document the two fields in `site/commands.html` and `plugins/agterm/skills/agterm/`, and add one
       sentence to the Live sessions section of `site/docs.html`
-- [ ] add a `.claude/rules/windows.md` note: host lifecycle, the one-target SPI boundary, the
+- [x] add a `.claude/rules/windows.md` note: host lifecycle, the one-target SPI boundary, the
       no-Swift-after-fork rule, and that Fresh shells and Re-run never stop a live host
-- [ ] move this plan to `docs/plans/completed/`
+- [x] move this plan to `docs/plans/completed/`
+
+Documentation keeps the verified microphone result and the untested App Data expectation in
+`docs/troubleshooting.md`, with Full Disk Access retained for `orphaned` and `app` panes.
+The installed skill links to that diagnosis; field definitions are mirrored in its reference
+and `site/commands.html`. Validation passed: 11 SkillInstallTests, writing-style lint on added
+prose, HTML tag balance, field/link checks and whitespace checks. No code or installed skill
+copies changed, and the index is empty.
 
 ## Post-Completion
 
