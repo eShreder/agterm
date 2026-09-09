@@ -18,9 +18,13 @@ via dlsym on libquarantine:
 - fresh instance, plain login-shell pane created by the running app: agterm resolves to itself, the
   pane's zsh resolves to agterm, and a `claude` started in that pane is also attributed to agterm.
   Executable confirmed through `lsof` as the Developer ID signed
-  `~/.local/share/claude/versions/2.1.266`, so an independently signed hardened-runtime binary is not
-  self-responsible merely by being signed. That instance came up with no zmx daemon, so this is the
-  non-Live path.
+  `~/.local/share/claude/versions/2.1.266`. That instance came up with no zmx daemon, so this is the
+  non-Live path, and the probed process was awaiting folder trust rather than at its interactive
+  prompt. This refutes signing ALONE forcing self-responsibility: a Developer ID hardened-runtime
+  binary was attributed to the terminal. It does not establish what happens after trust is granted,
+  nor which process or context would eventually make a microphone request. Neither was tested. Note
+  that parentage and executable path cannot rule out a later re-exec, since `execve` keeps both the
+  pid and the parent pid.
 - live instance: a zmx ATTACH CLIENT spawned by the running app resolves to agterm. That client's own
   parentage explains its result; the daemon it attaches to, and any process running inside that daemon,
   were not measured, and a new attachment can coexist with an old daemon whose children are
