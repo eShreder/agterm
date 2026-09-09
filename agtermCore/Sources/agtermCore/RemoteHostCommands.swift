@@ -31,7 +31,7 @@ extension RemoteSession {
         // the three the local pane clears too, empty being unset to zmx; ZMX_DIR stays the host's own
         let remote = CommandRestore.shellQuotedLine([
             "/usr/bin/env", "ZMX_SESSION=", "ZMX_SESSION_PREFIX=", "ZMX_NO_DETACH_KEY=1",
-            "/bin/sh", "-c", hostPathPrefix + " && exec " + CommandRestore.shellQuotedLine(attach),
+            "/bin/sh", "-c", pathWidenedExec(attach),
         ])
         return sshArguments(host: host, connectTimeout: connectTimeout, interactive: true) + [remote]
     }
@@ -65,6 +65,10 @@ extension RemoteSession {
 
     /// One command for the far side's login shell, whatever shell that is: `/bin/sh -c '<PATH widening> && exec …>'`.
     private static func remoteChain(_ argv: [String]) -> String {
-        CommandRestore.shellQuotedLine(["/bin/sh", "-c", hostPathPrefix + " && exec " + CommandRestore.shellQuotedLine(argv)])
+        CommandRestore.shellQuotedLine(["/bin/sh", "-c", pathWidenedExec(argv)])
+    }
+
+    private static func pathWidenedExec(_ argv: [String]) -> String {
+        hostPathPrefix + " && exec " + CommandRestore.shellQuotedLine(argv)
     }
 }

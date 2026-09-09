@@ -2528,6 +2528,15 @@
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">remoteHost</span>.
               The title bar shows a cloud and the remote host, which you can hide with the Remote host toggle in Settings ▸ Interface.
             </p>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 12px 0 0">
+              An attach joins as a follower, and pinned zmx has one leader per pane, so the pane arrives at the <em>other</em>
+              machine's window size and ignores input until your first <em>classified</em> key — a printable character, Return, Tab or
+              Backspace — takes the lead and reflows it. Until then the mouse, focus reporting and Ctrl-L do not reach the far side,
+              so a mouse-driven TUI looks dead, and an ordinary control key may not wake it either. Because the lead is per pane, typing in one half of a split
+              leaves the other at the remote's geometry, and after you close the session the far side keeps your size until something
+              there resizes it. When a connection drops, the pane holds on Ghostty's press-any-key prompt under one line naming the
+              host, the session, the pane and the exit status.
+            </p>
             <p style="font-size: 16px; line-height: 1.7; color: #cbc6bc; margin: 16px 0 0">
               A plain server works too. Any Linux or Mac host with zmx installed and key-based ssh can hold sessions that survive a
               closed laptop, and nothing of agterm's is needed there:
@@ -2535,7 +2544,7 @@
               the host's own <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">zmx list</span>,
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">agtermctl remote attach HOST NAME</span>
               opens one of them as a session marked remote, and
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--create --command 'cd ~/api && claude'</span>
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--create --command 'cd ~/api &amp;&amp; claude'</span>
               starts an agent in a new one. Because zmx is a transparent proxy with replay, the screen and scrollback come back on
               attach and programs inside the session notify and report their directory the way local ones do. Closing the row leaves
               the process running on the host;
@@ -2560,15 +2569,6 @@
               <span style="color: #f2b45c">devbox</span> <span style="color: #f2b45c">api</span> --create --command
               <span style="color: #f2b45c">'cd ~/projects/api &amp;&amp; claude'</span>
             </div>
-            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 12px 0 0">
-              An attach joins as a follower, and pinned zmx has one leader per pane, so the pane arrives at the <em>other</em>
-              machine's window size and ignores input until your first <em>classified</em> key — a printable character, Return, Tab or
-              Backspace — takes the lead and reflows it. Until then the mouse, focus reporting and Ctrl-L do not reach the far side,
-              so a mouse-driven TUI looks dead, and an ordinary control key may not wake it either. Because the lead is per pane, typing in one half of a split
-              leaves the other at the remote's geometry, and after you close the session the far side keeps your size until something
-              there resizes it. When a connection drops, the pane holds on Ghostty's press-any-key prompt under one line naming the
-              host, the session, the pane and the exit status.
-            </p>
 
             <div
               style="

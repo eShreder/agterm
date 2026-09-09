@@ -142,8 +142,8 @@ final class ControlServer {
     /// a fake instead of a second Mac.
     let remoteRunner: any RemoteCommandRunner
 
-    /// How long a remote projection read may take before it is abandoned. `ConnectTimeout` bounds only the
-    /// handshake, so this is what covers a remote agterm that never answers.
+    /// How long a remote read or kill may take before it is abandoned. `ConnectTimeout` bounds only the
+    /// handshake, so this is what covers a far side that never answers.
     static let remoteTreeDeadline: TimeInterval = 10
 
     init(library: WindowLibrary, actions: AppActions, settingsModel: SettingsModel, identity: AppIdentity,

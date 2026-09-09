@@ -1486,6 +1486,19 @@ it.
 Every zmx command needs a running agterm: only the app can join its live windows, its pending closes and
 its persisted snapshots against what zmx reports. With agterm stopped there is nothing to ask.
 
+Which programs are NOT re-run is controlled by `restore-denylist.conf` in the config directory (one
+command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain
+user-edited file read at launch — there is no control command for it. Two more things are skipped
+whatever the denylist says, and the pane starts a plain shell. A control character in the command's
+name or any argument: the restored line is typed, so the line editor reads that byte as an editing key
+rather than as text. A byte sequence that was not valid UTF-8: it is captured lossily, so replaying it
+would run an argument the process never had.
+
+For a PER-SESSION, per-pane override that pins (or suppresses) what a pane restores, use
+`session restore` (in the session section above): it wins over the captured foreground, bypasses the
+denylist, and is what a `SessionStart` hook rewrites to reattach a non-idempotent command. `restore clear`
+here is app-global and touches only the captured commands, not those overrides.
+
 ## remote
 
 Sessions on a host that runs zmx and nothing of agterm's: any Linux or Mac box with zmx 0.7 or later
@@ -1510,7 +1523,10 @@ existing session ignores the command, and `--command` without `--create` is refu
 local open window id, unique prefix, or `active`; omitted, the frontmost window. An invalid or closed
 destination fails without creating anything. When ssh exits, the pane holds on Ghostty's press-any-key
 prompt under one line naming the session, the host and the exit status. Closing the session here ends only
-this side's connection; the far-side process keeps running. It is not restored after a relaunch.
+this side's connection; the far-side process keeps running. It is not restored after a relaunch. When
+another client already holds the session, this attach joins as a follower: the pane shows the far side's
+geometry and drops input until the first printable key, Return, Tab or Backspace takes the lead, exactly
+as for zmx attach.
 
 `agtermctl remote kill HOST NAME --force` — runs `zmx kill NAME` on the host, ending the process and every
 client attached to it, a pane here included. `--force` is required as confirmation.
@@ -1518,19 +1534,6 @@ client attached to it, a pane here included. `--force` is required as confirmati
 The zmx session name is the address everywhere: plain text with no whitespace or `/`, not starting with
 `-`. zmx is found through the host's `PATH` plus `~/.local/bin`, `~/bin`, `/usr/local/bin` and
 `/opt/homebrew/bin`, since sshd's non-interactive shell reads no profile.
-
-Which programs are NOT re-run is controlled by `restore-denylist.conf` in the config directory (one
-command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain
-user-edited file read at launch — there is no control command for it. Two more things are skipped
-whatever the denylist says, and the pane starts a plain shell. A control character in the command's
-name or any argument: the restored line is typed, so the line editor reads that byte as an editing key
-rather than as text. A byte sequence that was not valid UTF-8: it is captured lossily, so replaying it
-would run an argument the process never had.
-
-For a PER-SESSION, per-pane override that pins (or suppresses) what a pane restores, use
-`session restore` (in the session section above): it wins over the captured foreground, bypasses the
-denylist, and is what a `SessionStart` hook rewrites to reattach a non-idempotent command. `restore clear`
-here is app-global and touches only the captured commands, not those overrides.
 
 ## version
 

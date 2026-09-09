@@ -1,6 +1,5 @@
-import AppKit
-import agtermCore
 import Foundation
+import agtermCore
 
 /// The `remote` group: zmx sessions on a host that runs nothing of agterm's. List and kill are one ssh each
 /// through the injected runner; attach never sshes here — the pane's own command does, so a transport

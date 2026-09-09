@@ -118,8 +118,7 @@ here so it is a decision and not an omission.
 - `agtermTests`: `ControlServer` with a fake runner: list parses and filters; attach inserts a session with
   `remoteHost`, `wait`, the expected command, into the resolved window; an invalid or closed `--window`
   creates nothing; kill reports the far side's answer.
-- UI test: `remote list` with an invalid host returns the constant error; `remote attach` with `--command`
-  and no `--create` is refused.
+- UI test: none, see decision 6.
 - Manual gate, once, against a Linux host with zmx: list shows a session started by hand, attach replays
   its screen at this pane's size, closing the tab leaves `zmx list` on the host unchanged, `--create
   --command claude` starts the agent, `remote kill --force` ends it, and notifications from inside the
@@ -148,3 +147,5 @@ stated anywhere. The cookbook is not touched; a picker recipe can follow.
 3. `--create` is explicit; a bare attach never creates.
 4. Sessions are not restored after a relaunch in v1 (see the persistence decision).
 5. No GUI; picker and workflow live in the skill and, later, a cookbook recipe.
+6. No XCUITest methods for the remote group: like zmx.tree/zmx.attach, the end-to-end coverage is the
+   hosted ControlServer suite driven through ControlDispatcher (ControlServerRemoteTests).
