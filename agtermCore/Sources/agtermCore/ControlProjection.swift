@@ -242,6 +242,13 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// session is never persisted, so this never survives a relaunch.
     public let remoteHost: String?
 
+    /// The tmux window this session mirrors (`@N`) when it is tmux-backed, else nil (omitted from the
+    /// JSON). With `tmuxPane`, the read side of the `tmux:` target addressing.
+    public let tmuxWindow: String?
+    /// The mirrored window's LEADING tmux pane (`%N`) — what a caller passes as
+    /// `--target tmux:$TMUX_PANE`; nil until the first layout arrives / for a local session.
+    public let tmuxPane: String?
+
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 hasSplit: Bool? = nil, backedByZmx: Bool?, splitAxis: String? = nil,
                 splitRatio: Double? = nil, splitFocused: Bool? = nil,
@@ -256,7 +263,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
                 surfaces: [ControlSurfaceNode]? = nil, realized: Bool? = nil,
-                context: String? = nil, remoteHost: String? = nil, splitCwd: String? = nil) {
+                context: String? = nil, remoteHost: String? = nil, splitCwd: String? = nil,
+                tmuxWindow: String? = nil, tmuxPane: String? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -299,6 +307,8 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.realized = realized
         self.splitCwd = splitCwd
         self.remoteHost = remoteHost
+        self.tmuxWindow = tmuxWindow
+        self.tmuxPane = tmuxPane
     }
 }
 

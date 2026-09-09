@@ -51,7 +51,11 @@ extension ControlServer {
             guard store.canRemoveWorkspace else {
                 return ControlResponse(ok: false, error: "cannot delete last workspace")
             }
-            store.removeWorkspace(id)
+            // a tmux mirror workspace is backed by a live TmuxController; detach it (tmux survives
+            // server-side, removing the workspace via teardown) so the gateway + relay sockets are
+            // freed — a plain removeWorkspace would orphan the ssh/tmux client and leave a phantom
+            // tmux.list entry. A normal workspace has no controller and falls through to removal.
+            if !actions.detachTmux(forConnectionWorkspace: id) { store.removeWorkspace(id) }
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }

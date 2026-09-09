@@ -9,6 +9,7 @@ import agtermCore
 final class WindowAccessorTests: XCTestCase {
     private var stateDir: URL!
     private var library: WindowLibrary!
+    private var actions: AppActions!
     private var window: NSWindow!
 
     override func setUp() async throws {
@@ -17,6 +18,7 @@ final class WindowAccessorTests: XCTestCase {
             stateDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("agterm-window-accessor-tests-\(UUID().uuidString)", isDirectory: true)
             library = WindowLibrary(directory: stateDir)
+            actions = AppActions(library: library)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
             // over-releases a window the registry may still hold, crashing the host at autorelease-pool pop
@@ -28,6 +30,7 @@ final class WindowAccessorTests: XCTestCase {
         await MainActor.run {
             window?.close()
             window = nil
+            actions = nil
             library = nil
             try? FileManager.default.removeItem(at: stateDir)
             stateDir = nil
@@ -58,7 +61,7 @@ final class WindowAccessorTests: XCTestCase {
     func testATitleSetBeforeAttachIsAppliedOnAttach() throws {
         let store = try XCTUnwrap(library.activeStore)
         let probe = WindowAccessor.TitleProbeView(windowID: try XCTUnwrap(library.activeWindowID),
-                                                  library: library, store: store)
+                                                  library: library, store: store, actions: actions)
         probe.setTitle("early")
 
         window.contentView = probe
@@ -70,7 +73,7 @@ final class WindowAccessorTests: XCTestCase {
     private func attachedProbe() throws -> WindowAccessor.TitleProbeView {
         let store = try XCTUnwrap(library.activeStore)
         let probe = WindowAccessor.TitleProbeView(windowID: try XCTUnwrap(library.activeWindowID),
-                                                  library: library, store: store)
+                                                  library: library, store: store, actions: actions)
         window.contentView = probe
         return probe
     }

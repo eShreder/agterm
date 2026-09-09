@@ -14,9 +14,11 @@ struct WindowAccessor: NSViewRepresentable {
     let library: WindowLibrary
     let store: AppStore
     let captureOnExit: AppDelegate.ExitCapture?
+    let actions: AppActions
 
     func makeNSView(context _: Context) -> TitleProbeView {
-        TitleProbeView(windowID: windowID, library: library, store: store, captureOnExit: captureOnExit)
+        TitleProbeView(windowID: windowID, library: library, store: store, captureOnExit: captureOnExit,
+                       actions: actions)
     }
 
     func updateNSView(_ nsView: TitleProbeView, context _: Context) {
@@ -28,6 +30,7 @@ struct WindowAccessor: NSViewRepresentable {
         private let library: WindowLibrary
         private let store: AppStore
         private let captureOnExit: AppDelegate.ExitCapture?
+        private let actions: AppActions
 
         /// Observer tokens: AppKit rebuilds the titlebar subviews on key/fullscreen, so the blend re-applies.
         nonisolated(unsafe) private var titlebarObservers: [NSObjectProtocol] = []
@@ -39,11 +42,12 @@ struct WindowAccessor: NSViewRepresentable {
         private var closeProxy: WindowCloseDelegateProxy?
 
         init(windowID: WindowInfo.ID, library: WindowLibrary, store: AppStore,
-             captureOnExit: AppDelegate.ExitCapture? = nil) {
+             captureOnExit: AppDelegate.ExitCapture? = nil, actions: AppActions) {
             self.windowID = windowID
             self.library = library
             self.store = store
             self.captureOnExit = captureOnExit
+            self.actions = actions
             super.init(frame: .zero)
         }
 
@@ -133,11 +137,12 @@ struct WindowAccessor: NSViewRepresentable {
                 }
                 titlebarObservers.append(token)
             }
-            // report close: tear down surfaces, then mark closed. captures library/store/id directly, NOT
-            // `self` — the view deallocates as the window closes, so a `[weak self]` hop would no-op.
+            // report close: tear down surfaces, then mark closed. captures library/store/id/actions
+            // directly, NOT `self` — the view deallocates as the window closes, so a `[weak self]` hop
+            // would no-op.
             let closeToken = NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification, object: window, queue: .main
-            ) { [library, store, windowID, captureOnExit, weak window] _ in
+            ) { [library, store, windowID, captureOnExit, actions, weak window] _ in
                 MainActor.assumeIsolated {
                     // persist the final frame (keyed by its id) so an in-session reopen or a restart restores
                     // size/position; SwiftUI's own index-based autosave can't.
@@ -181,6 +186,12 @@ struct WindowAccessor: NSViewRepresentable {
                         session.scratchSurface?.teardown()
                         session.discardHudBody() // an unrealized HUD has no teardown to delete its body file
                     }
+                    // detach any live tmux connection hosted in THIS window's store before the store is
+                    // dropped: the controller is app-global (AppActions.tmuxControllers) and holds the
+                    // store + gateway strongly, so without this a window close orphans the ssh/tmux client
+                    // and leaks the per-window relay sockets + the retained store (closeWindow only drops
+                    // the library's ref). Detach (not kill) leaves the session server-side for reattach.
+                    actions.detachTmux(forClosingWindowStore: store)
                     library.closeWindow(windowID)
                     // the quick-terminal panel belongs to no window, so nothing above tore it down. Usually
                     // moot — an empty open set terminates the app — but a cancelled quit prompt leaves agterm

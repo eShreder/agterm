@@ -11,7 +11,8 @@ extension AppStore {
     /// Builds a `Snapshot` of the current tree; each session captures its live `currentCwd` (or `initialCwd`
     /// if no PWD report arrived). Runs on `@MainActor`; the result is `Sendable`, safe to hand to a writer.
     public func snapshot() -> Snapshot {
-        let workspaceSnapshots = workspaces.map(workspaceSnapshot)
+        // Ephemeral workspaces (tmux -CC mirrors) never persist — they rebuild from live tmux on attach.
+        let workspaceSnapshots = workspaces.filter { !$0.ephemeral }.map(workspaceSnapshot)
         // TREE order keeps the on-disk list deterministic (not the Set's hash order); an unmarked store omits
         // both focus keys, matching a file written before the set existed. `focusedWorkspaceID` stays unused.
         let focusIDs = workspaces.map(\.id).filter(focusedWorkspaceIDs.contains)

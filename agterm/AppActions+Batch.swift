@@ -13,11 +13,19 @@ extension AppActions {
             return
         }
         guard confirmCloseSessions(sessions) else { return }
+        // Backend-aware, like the single-session path this delegates to above: a tmux-backed member routes
+        // to `kill-window` and is torn down by the `%window-close` echo, so it must NOT also close locally.
+        // It also cannot join the grace-undo group — undo would restore a mirror session whose remote
+        // window is already gone and whose relay socket is closed, so only the local members get a grace
+        // record. Without this split a batch close left every mirrored window running on the remote while
+        // a single close killed it: the same command, two outcomes, decided by the selection size.
+        var local: [Session] = []
+        for session in sessions where !closeTmuxSession(session.id) { local.append(session) }
         withAnimation(.easeInOut(duration: 0.16)) {
             if closeGraceUndoEnabled {
-                _ = store.softCloseSessions(sessions.map(\.id))
+                if !local.isEmpty { _ = store.softCloseSessions(local.map(\.id)) }
             } else {
-                for session in sessions {
+                for session in local {
                     store.closeSession(session.id)
                 }
             }
