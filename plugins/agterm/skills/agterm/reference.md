@@ -16,6 +16,7 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   `result` carries one of: `id` (affected/new session/workspace/window), `text` (session copy/text),
   `exitCode` (overlay result), `count` (diagnostics/search), `restore` (the restore-mode policy),
   `zmx` (the daemon inventory), `remote` (another Mac's attachable sessions, for `zmx tree`),
+  `remoteSessions` (a zmx host's sessions, for `remote list`),
   `affected` (things actually changed: sessions
   for a batch close/move, daemons killed for `zmx prune`), `tree` (the tree), `windows` (window list), `app` (the serving app's identity, for
   `version`). The process exit code is non-zero when
@@ -1484,6 +1485,39 @@ it.
 
 Every zmx command needs a running agterm: only the app can join its live windows, its pending closes and
 its persisted snapshots against what zmx reports. With agterm stopped there is nothing to ask.
+
+## remote
+
+Sessions on a host that runs zmx and nothing of agterm's: any Linux or Mac box with zmx 0.7 or later
+installed (zmx.sh, `brew install neurosnap/tap/zmx`, or a distribution package) and reachable over
+key-based ssh. Nothing else is needed on the host. A host that also runs agterm keeps its own live-pane
+daemons out of this listing; those are `zmx tree` and `zmx attach`.
+
+`agtermctl remote list HOST` — runs the host's own `zmx list` over ssh. `result.remoteSessions` carries one
+row per session: `name`, `clients` (attached clients), `cwd` (when zmx reports one), `created` (unix
+seconds) and `labels` (every other `key=value` on the row, as set with `zmx set`). An empty list is a
+successful answer. A host without zmx answers `zmx is not installed on HOST`; any other failure reports what
+ssh or zmx said.
+
+`agtermctl remote attach HOST NAME [--create] [--command CMD] [--window W]` — opens NAME here as a session
+marked remote, in the destination window's current workspace, selected; returns its `id`, and its tree node
+carries `remoteHost`. The pane runs `ssh -tt HOST zmx attach NAME`, so the far side's screen and scrollback
+replay into the pane and programs inside it reach agterm the way local ones do (notifications, working
+directory, prompt marks). Without `--create` the attach refuses a name zmx no longer has, so a session gone
+since the listing fails visibly instead of becoming a fresh shell wearing its name. With `--create` zmx
+creates the session when absent, running `--command` through `/bin/sh -c` instead of a login shell; an
+existing session ignores the command, and `--command` without `--create` is refused. `--window` takes a
+local open window id, unique prefix, or `active`; omitted, the frontmost window. An invalid or closed
+destination fails without creating anything. When ssh exits, the pane holds on Ghostty's press-any-key
+prompt under one line naming the session, the host and the exit status. Closing the session here ends only
+this side's connection; the far-side process keeps running. It is not restored after a relaunch.
+
+`agtermctl remote kill HOST NAME --force` — runs `zmx kill NAME` on the host, ending the process and every
+client attached to it, a pane here included. `--force` is required as confirmation.
+
+The zmx session name is the address everywhere: plain text with no whitespace or `/`, not starting with
+`-`. zmx is found through the host's `PATH` plus `~/.local/bin`, `~/bin`, `/usr/local/bin` and
+`/opt/homebrew/bin`, since sshd's non-interactive shell reads no profile.
 
 Which programs are NOT re-run is controlled by `restore-denylist.conf` in the config directory (one
 command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain

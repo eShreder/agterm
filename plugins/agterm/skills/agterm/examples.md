@@ -89,6 +89,31 @@ s=$(agtermctl zmx tree studio.local --json |
 The row is marked remote and carries `remoteHost` in the tree. Closing it ends only this side's connection,
 and it does not come back after a relaunch.
 
+## Attach a zmx session on a server
+
+Any host with zmx installed and key-based ssh will do; agterm is not needed there. List its sessions, open
+one, or create one that starts an agent in the project directory:
+
+```bash
+agtermctl remote list devbox
+agtermctl remote attach devbox api
+agtermctl remote attach devbox api --create --command 'cd ~/projects/api && claude'
+agtermctl remote kill devbox api --force
+```
+
+Pipe the listing through the picker to let the user choose:
+
+```bash
+s=$(agtermctl remote list devbox --json |
+  jq '[.result.remoteSessions[] | {id: .name, label: .name,
+        subtitle: ((.cwd // "") + "  " + ([.labels | to_entries[] | "\(.key)=\(.value)"] | join(" ")))}]' |
+  agtermctl pick --prompt "Attach which session?" | jq -r '.id // empty')
+[ -n "$s" ] && agtermctl remote attach devbox "$s"
+```
+
+Closing the row ends only this side's connection. To start something on the host without attaching, run
+`ssh devbox 'zmx run api -d make test'` yourself; agterm adds nothing there.
+
 ## Read or change the local restore policy
 
 This is about THIS instance, not a remote one: `zmx attach` requires nothing of the local restore mode.

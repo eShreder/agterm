@@ -18,6 +18,7 @@ What it does:
 - **Three restore modes.** Restore the saved layout with fresh shells, start the commands that were captured at quit, or keep the actual primary and split processes alive with zmx. Live sessions are global, require zsh as the macOS login shell, and take effect after restarting agterm.
 - **Agent skill.** An installable skill (Help ▸ Install Agent Skill…) teaches Claude Code or Codex the control model and the `agtermctl` commands, so an agent running inside agterm can build its own layout, run overlays, manage windows, and show images inline without you explaining the API.
 - **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. Status hooks for Claude Code, Codex, Pi, OpenCode, and other agents install from Help ▸ Install Agent Status Hooks….
+- **Remote sessions.** Attach to a zmx session on any host over ssh (`agtermctl remote attach host name`), or to a session of another agterm (`agtermctl zmx attach`); the row is marked remote, its screen replays on attach, and closing it leaves the process running on the host.
 
 A lot of "does it have X?" questions have the same answer: bind X yourself. A `command` line in `keymap.conf` turns any shell line into a key chord, and an overlay gives an interactive program a real terminal over the session, so a file manager, a git UI, or a database browser is one line away. Bigger workflows become scripts, which is what the [cookbook](cookbook/) collects.
 
