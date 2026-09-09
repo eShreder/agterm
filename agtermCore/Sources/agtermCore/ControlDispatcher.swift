@@ -215,6 +215,8 @@ public struct ControlDispatcher {
             return dispatchAskCommand(request)
         case .sessionHudOpen, .sessionHudUpdate, .sessionHudClose:
             return dispatchHudCommand(request)
+        case .remoteList, .remoteAttach, .remoteKill:
+            return nil
         }
     }
 

@@ -94,6 +94,9 @@ public enum Command: String, Codable, Sendable {
     case zmxKill = "zmx.kill"
     case zmxTree = "zmx.tree"
     case zmxAttach = "zmx.attach"
+    case remoteList = "remote.list"
+    case remoteAttach = "remote.attach"
+    case remoteKill = "remote.kill"
     /// UI-TEST-ONLY: forces the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
     /// simulate a macOS light/dark flip; with NO name it READS the side the last config feed applied, so a
     /// test can assert the flip drove the reload. Refused outside an XCUITest launch, and EXEMPT from the
@@ -136,6 +139,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var force: Bool?
     /// The machine `zmx tree` reaches, spelled as ssh would take it.
     public var host: String?
+    /// For `remote.attach`: let zmx create the session when the name is absent (the CLI's `--create`);
+    /// omitted/`false` attaches only, behind the create-only guard.
+    public var create: Bool?
     /// For `session.new`: create in the background without selecting or focusing (the CLI's `--no-select`);
     /// omitted/`false` keeps select-and-focus. Read back via the `tree` `active` flag — the new node is not it.
     public var noSelect: Bool?
@@ -343,7 +349,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public init(name: String? = nil, cwd: String? = nil, targets: [String]? = nil,
                 workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, collapsed: Bool? = nil, minimized: Bool? = nil,
-                force: Bool? = nil, host: String? = nil,
+                force: Bool? = nil, host: String? = nil, create: Bool? = nil,
                 noSelect: Bool? = nil,
                 text: String? = nil, select: Bool? = nil, mode: String? = nil, axis: String? = nil,
                 command: String? = nil, wait: Bool? = nil, sizePercent: Int? = nil, full: Bool? = nil,
@@ -374,6 +380,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.minimized = minimized
         self.force = force
         self.host = host
+        self.create = create
         self.noSelect = noSelect
         self.text = text
         self.select = select
@@ -521,6 +528,8 @@ public struct ControlResult: Codable, Sendable, Equatable {
     public var zmx: ControlZmxInventory?
     /// Another machine's attachable sessions, for `zmx tree`.
     public var remote: ControlRemoteTree?
+    /// A zmx host's sessions, for `remote list`.
+    public var remoteSessions: [ControlRemoteHostSession]?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
@@ -532,12 +541,14 @@ public struct ControlResult: Codable, Sendable, Equatable {
                 pick: ControlPickResult? = nil, ask: ControlAskResult? = nil, cursor: ControlCursor? = nil,
                 app: AppIdentity? = nil, restore: ControlRestoreStatus? = nil,
                 zmx: ControlZmxInventory? = nil, remote: ControlRemoteTree? = nil,
+                remoteSessions: [ControlRemoteHostSession]? = nil,
                 width: Int? = nil, height: Int? = nil) {
         self.width = width
         self.height = height
         self.restore = restore
         self.zmx = zmx
         self.remote = remote
+        self.remoteSessions = remoteSessions
         self.id = id
         self.tree = tree
         self.text = text
