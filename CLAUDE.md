@@ -123,6 +123,9 @@ C-boundary concurrency before changing the bridge.
 - Manual Debug UI work uses a separate `open -n` instance with isolated state and short socket. Address
   its CLI with `--socket` after the subcommand. Stop only its known PID with SIGTERM; clean quit triggers
   the visible quit-confirmation alert. Use clean quit only when testing its final cwd/running-command flush.
+- A manual-test pane opens in `$HOME`. Never start `claude` or another agent CLI in one without changing
+  the directory first: a session rooted there treats every dotfile and repo as its project and writes a
+  `~/.claude/projects/-Users-umputun` transcript.
 - Never run the Help ▸ Install installers (agent hooks, CLI, agent skill) from a Debug or worktree
   instance, and never invoke `AgentHooksInstaller` in a manual run. They write `~/.config/agterm/`,
   `~/.claude/settings.json`, and `~/.codex/`, which `AGTERM_STATE_DIR` does not isolate, and bake
