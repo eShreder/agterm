@@ -59,6 +59,9 @@ final class MockControlActions: ControlActions {
         case zmxKill(target: String, window: String?, pane: ZmxPaneRole)
         case zmxTree(host: String?)
         case zmxAttach(host: String, session: String)
+        case remoteList(host: String)
+        case remoteAttach(host: String, name: String, window: String?, create: Bool, command: String?)
+        case remoteKill(host: String, name: String)
         case sidebarVisibility(ControlToggleMode)
         case sidebarViewMode(ControlSidebarViewMode)
         case expand(window: String?)
@@ -139,6 +142,9 @@ final class MockControlActions: ControlActions {
     var nextZmxKillResponse = ControlResponse(ok: true)
     var nextRemoteTreeResponse = ControlResponse(ok: true)
     var nextRemoteAttachResponse = ControlResponse(ok: true)
+    var nextRemoteListResponse = ControlResponse(ok: true)
+    var nextRemoteHostAttachResponse = ControlResponse(ok: true)
+    var nextRemoteKillResponse = ControlResponse(ok: true)
     var nextQuickResponse = ControlResponse(ok: true)
     var nextQuickTypeResponse = ControlResponse(ok: true)
     var nextQuickTextResponse = ControlResponse(ok: true)
@@ -449,6 +455,22 @@ final class MockControlActions: ControlActions {
     func attachRemoteSession(host: String, session: String) async -> ControlResponse {
         calls.append(.zmxAttach(host: host, session: session))
         return nextRemoteAttachResponse
+    }
+
+    func listRemoteHostSessions(host: String) async -> ControlResponse {
+        calls.append(.remoteList(host: host))
+        return nextRemoteListResponse
+    }
+
+    func attachRemoteHostSession(host: String, name: String, window: String?, create: Bool,
+                                 command: String?) async -> ControlResponse {
+        calls.append(.remoteAttach(host: host, name: name, window: window, create: create, command: command))
+        return nextRemoteHostAttachResponse
+    }
+
+    func killRemoteHostSession(host: String, name: String) async -> ControlResponse {
+        calls.append(.remoteKill(host: host, name: name))
+        return nextRemoteKillResponse
     }
 
     func setSidebarVisibility(_ mode: ControlToggleMode) -> ControlResponse {
