@@ -3152,7 +3152,7 @@
                 List the zmx sessions on a host that runs zmx and nothing of agterm's: any Linux or Mac box with zmx 0.7 or later, reachable over key-based ssh. It runs the host's own <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx list</span> and prints one row per session. Sessions an agterm on that host created for its own live panes are omitted; those are <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx tree</span>.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
-                The connection is non-interactive: ssh runs with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">BatchMode</span>, so key-based auth must already work for the host and a password or host-key prompt is a failure rather than a question. The far side also needs <span style="font-family: &quot;JetBrains Mono&quot;, monospace">zmx</span> installed by the cask or the Help action, since a machine merely running agterm has no CLI an ssh command can find.
+                The connection is non-interactive: ssh runs with <span style="font-family: &quot;JetBrains Mono&quot;, monospace">BatchMode</span>, so key-based auth must already work for the host and a password or host-key prompt is a failure rather than a question.
               </p>
               <p style="font-size: 13.5px; line-height: 1.6; color: #949ba4; margin: 8px 0 0">
                 A host without zmx answers that zmx is not installed. zmx is found through the far side's PATH plus ~/.local/bin, ~/bin, /usr/local/bin and /opt/homebrew/bin.
