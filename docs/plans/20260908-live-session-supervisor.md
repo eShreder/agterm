@@ -354,8 +354,9 @@ or to a dead pid), `unknown` (lookup failed or SPI absent). Absent for non-Live 
       still reported; pane identity followed through swap and promotion
 - [ ] add the two fields and `SessionHost.classify(leader:responsible:hostPid:appPid:)`, where
       `responsible == leader` is `orphaned`, `responsible == hostPid` is `supervisor`,
-      `responsible == appPid` is `app`, a dead or absent `responsible` is `orphaned`, and a live
-      responsible pid that is none of those is `unknown`, never `orphaned`
+      `responsible == appPid` is `app`, a responsible pid positively identified as dead is `orphaned`,
+      a failed or absent lookup is `unknown`, and a live responsible pid that is none of those is
+      `unknown`, never `orphaned`
 - [ ] wire one leader snapshot per `buildTree` in `ControlServer.swift` through
       `ZmxClient.sessionLeaderPIDs` and `AgtermResponsibility.responsibleProcess(of:)`, probing each
       unique leader once, so the fields appear on every tree read and not only the zmx handlers
