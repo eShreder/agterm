@@ -1162,11 +1162,12 @@ attributed to a session (default: the active session of the frontmost window). `
 the session name. Clicking the banner reveals that session. This is the only app-level way to post a
 banner (the terminal's own OSC 9/777 is the other source). Control-native (no GUI/menu equivalent).
 
-The banner is gated by **Settings ▸ Notifications ▸ Show notification banners**; the unseen badge is
-not. With banners off the command still succeeds and still raises the badge, but nothing reaches macOS
-— so it answers `ok` with an advisory `result.text` (`badge updated, but "Show notification banners" is
-off, so no banner was posted`) instead of a bare `ok`. Treat the presence of `result.text` as "no banner
-appeared"; a delivered notification carries none. The badge itself reads back on `tree` as `unseen`.
+The banner is gated by **Settings ▸ Notifications ▸ Show notification banners**; the unseen badge has its
+own toggle below it, **Show notification badges**, which hides the sidebar pill and the Dock count while the
+count keeps tracking and reads back on `tree` as `unseen`. With banners off the command still succeeds and
+still raises the badge, but nothing reaches macOS — so it answers `ok` with an advisory `result.text`
+(`badge updated, but "Show notification banners" is off, so no banner was posted`) instead of a bare `ok`.
+Treat the presence of `result.text` as "no banner appeared"; a delivered notification carries none.
 
 For agentic attention (waiting on input, or a finished result), prefer `session status` over `notify`
 and OSC 9/777. The two overlap, either can raise an "I need you" signal, but a notification is a
