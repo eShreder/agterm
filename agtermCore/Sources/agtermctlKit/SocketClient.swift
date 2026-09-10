@@ -208,6 +208,9 @@ struct SocketClient {
         if let keymap = response.result?.keymap {
             return formatKeymap(keymap)
         }
+        if let sessions = response.result?.remoteSessions {
+            return formatRemoteHostSessions(sessions)
+        }
         if let remote = response.result?.remote {
             return formatRemoteTree(remote)
         }
@@ -285,6 +288,18 @@ struct SocketClient {
             let tail = detail.isEmpty ? "" : "  \(detail)"
             let at = "\(session.windowName)/\(session.workspaceName)/\(session.name)"
             return "  \(at)\(split)  [\(session.id)]  \(session.cwd)\(tail)"
+        }.joined(separator: "\n")
+    }
+
+    /// A zmx host's sessions, one per line: name, attached clients, directory when reported, labels sorted
+    /// by key. An empty answer says so rather than printing nothing.
+    static func formatRemoteHostSessions(_ sessions: [ControlRemoteHostSession]) -> String {
+        guard !sessions.isEmpty else { return "no sessions" }
+        return sessions.map { session in
+            let clients = session.clients == 1 ? "1 client" : "\(session.clients) clients"
+            let labels = session.labels.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+            return ["  \(session.name)", clients, session.cwd, labels.isEmpty ? nil : labels]
+                .compactMap { $0 }.joined(separator: "  ")
         }.joined(separator: "\n")
     }
 

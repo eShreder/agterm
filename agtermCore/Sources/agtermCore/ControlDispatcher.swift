@@ -161,6 +161,13 @@ public protocol ControlActions {
     func attachRemoteSession(host: String, session: String) async -> ControlResponse
     /// Attach into an open local window, defaulting to the frontmost window after discovery.
     func attachRemoteSession(host: String, session: String, window: String?) async -> ControlResponse
+    /// `remote.list`: the sessions zmx reports on a host that runs no agterm.
+    func listRemoteHostSessions(host: String) async -> ControlResponse
+    /// `remote.attach`: a local session running `ssh … zmx attach <name>` on that host.
+    func attachRemoteHostSession(host: String, name: String, window: String?, create: Bool,
+                                 command: String?) async -> ControlResponse
+    /// `remote.kill`: `zmx kill <name>` on that host.
+    func killRemoteHostSession(host: String, name: String) async -> ControlResponse
 }
 
 /// Routes control commands through a host-provided action seam. The dispatcher owns command parsing and
@@ -199,6 +206,8 @@ public struct ControlDispatcher {
             return dispatchAppCommand(request)
         case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree, .zmxAttach:
             return await dispatchZmxCommand(request)
+        case .remoteList, .remoteAttach, .remoteKill:
+            return await dispatchRemoteCommand(request)
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,

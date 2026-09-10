@@ -606,6 +606,16 @@ never restored after a relaunch. Both run ssh non-interactively, so key-based au
 the far side needs `agtermctl` installed by the cask or the Help action: a machine merely running agterm
 has no CLI an ssh command can find. Every zmx command needs a running agterm.
 
+**remote** - sessions on a host that runs zmx and nothing of agterm's (Linux or Mac, zmx 0.7+, key-based
+ssh) · `remote list HOST` - the host's own `zmx list`: one row per session with name, attached clients,
+directory and labels; agterm's own live-pane daemons on a host that also runs agterm are omitted (use
+`zmx tree` for those) · `remote attach HOST NAME [--create] [--command CMD] [--window W]` - open one here,
+marked remote, in the chosen local window's current workspace; without `--create` a name zmx no longer has
+fails instead of becoming a fresh shell, with it zmx creates the session and runs `--command` instead of a
+login shell (an existing session ignores the command). Closing it ends only this side's connection and it
+is not restored after a relaunch · `remote kill HOST NAME --force` - `zmx kill` on the host, ending the
+process and every attached client.
+
 **version** — `agtermctl version` — which agterm is serving this socket, as `result.app` (`version`, plus
 `commit` when the build recorded one). App-global: no target, no `--window`, no window need be open, so it
 works as a preflight from a keymap-launched script, which has no `$TERM_PROGRAM_VERSION`. Address the

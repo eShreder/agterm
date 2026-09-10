@@ -41,6 +41,10 @@ struct SkillInstallTests {
         #expect(reference.contains("`workspaceFilter`"))
         #expect(examples.contains("agtermctl workspace focus add"))
         #expect(examples.contains("agtermctl workspace filter on"))
+        #expect(skill.contains("`remote attach HOST NAME [--create] [--command CMD] [--window W]`"))
+        #expect(reference.contains("## remote"))
+        #expect(reference.contains("`agtermctl remote list HOST`"))
+        #expect(examples.contains("agtermctl remote attach"))
     }
 
     // the plugin manifests and the app bundle read the SAME directory, so a moved skill or a renamed leaf

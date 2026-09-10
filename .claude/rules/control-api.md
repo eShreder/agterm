@@ -161,6 +161,7 @@ renumbering. Do not reintroduce a count anywhere.
 - `keymap.reload`, `keymap.list`, `config.reload`, `theme.set`, `theme.list`, `restore.capture`,
   `restore.clear`, `restore.mode`, `version`
 - `zmx.list`, `zmx.prune`, `zmx.kill`, `zmx.tree`, `zmx.attach`
+- `remote.list`, `remote.attach`, `remote.kill`
 
 `debug.appearance` is a private `Command` case, absent from the list above, used only by `AppearanceFlipUITests`.
 It accepts light/dark, sets `NSApp.appearance`, posts `.agtermSystemAppearanceChanged`, echoes the effective
@@ -1054,6 +1055,42 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
   An opt-in upstream `zmx attach --take-leadership` with handback would remove all three and is not part of
   this work.
+
+## Remote zmx hosts
+
+- The `remote` group reaches a host that runs zmx and nothing of agterm's; `zmx tree`/`zmx attach` stay the
+  agterm-to-agterm teleport by session id. Two listings that answer different questions beat one verb
+  with two shapes: a zmx host has no windows, workspaces, splits, or `agtermctl`.
+- `remote.list {host}` runs the far side's own `zmx list` and parses its tab-separated `key=value` rows
+  (`RemoteHostList`): `name`, `clients`, `cwd` (the path of the `file://` URI), `created`, and every other
+  key as `labels`. Names passing `ZmxSupport.isDaemonName` are omitted: they belong to an agterm on that
+  host and are reached through `zmx tree`, where their split and ownership are known. Prose lines carry no
+  `name=` and are skipped, so an empty listing is a successful empty answer.
+- `remote.attach {host, target, window?, create?, command?}` inserts an ordinary command session with
+  `remoteHost`, `wait`, this Mac's home as cwd, and `RemoteSession.hostAttachPaneCommand` as the command.
+  It never sshes before insertion: ssh starts inside the pane, so a transport failure is a held pane exit,
+  as for `zmx.attach`. Without `create` the argv carries the same create-only guard `zmx.attach` uses; with
+  it the guard is dropped and `command`, if given, runs through `/bin/sh -c` instead of a login shell for a
+  NEW daemon (an existing one ignores it). `command` without `create` is refused by the dispatcher and by
+  `agtermctl` before anything is sent.
+- `remote.kill {host, target, force}` runs `zmx kill <name>` on the host; `force` is agterm's confirmation
+  and is never passed to zmx, whose own `--force` unlinks an unreadable socket.
+- The attach env clears `ZMX_SESSION`/`ZMX_SESSION_PREFIX` and sets `ZMX_NO_DETACH_KEY=1` like both other
+  attach shapes, but sets NO `ZMX_DIR`: the daemon lives where the user's own ssh shell would find it. zmx is
+  resolved through PATH widened with `$HOME/.local/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin`, because
+  sshd's non-interactive shell reads no profile and zmx.sh installs into `~/.local/bin`; the chain travels
+  as `/bin/sh -c` for the same account-shell reason as `treeCommand`.
+- Exit 127 from the list or kill chain reports `zmx is not installed on <host>`; any other nonzero exit
+  reports the trimmed stderr intact, as `zmx.tree` does. The host is validated by `RemoteSession`'s rule
+  and never echoed unless it passed; a session name must be plain, contain no `/` (it becomes a socket file
+  name), and not start with `-` (zmx reads that as an option), refused as `invalid remote session` before
+  it reaches an argv or an error message.
+- `remote.list` and `remote.kill` join `zmx.tree`/`zmx.attach` in `waitsOnNetwork`; `remote.attach` stays
+  inline because it touches only the model.
+- Not restored after a relaunch, by `Session.remoteHost`'s existing rule. Lifting that for a plain zmx host
+  is a separate change to `isPersistable` and the restore capture, recorded as a decision in the spec.
+- When no other client holds the daemon, this attach is its leader and the far side is sized to the pane
+  from the first byte; the follower limitations documented above apply only while another client is attached.
 
 ## Session backgrounds
 

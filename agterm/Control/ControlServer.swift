@@ -142,8 +142,8 @@ final class ControlServer {
     /// a fake instead of a second Mac.
     let remoteRunner: any RemoteCommandRunner
 
-    /// How long a remote projection read may take before it is abandoned. `ConnectTimeout` bounds only the
-    /// handshake, so this is what covers a remote agterm that never answers.
+    /// How long a remote read or kill may take before it is abandoned. `ConnectTimeout` bounds only the
+    /// handshake, so this is what covers a far side that never answers.
     static let remoteTreeDeadline: TimeInterval = 10
 
     init(library: WindowLibrary, actions: AppActions, settingsModel: SettingsModel, identity: AppIdentity,
@@ -416,10 +416,11 @@ final class ControlServer {
         writeResponse(conn, response)
     }
 
-    /// Commands whose dispatch awaits an ssh round trip. `zmx.attach` re-resolves the remote first, so it
-    /// carries the same wait; local `zmx.list` blocks too, but bounded, and stays inline to keep cache order.
+    /// Commands whose dispatch awaits an ssh round trip: the zmx tree and attach, and the remote list and
+    /// kill. `zmx.attach` re-resolves the remote first, so it carries the same wait; local `zmx.list` blocks
+    /// too, but bounded, and stays inline to keep cache order.
     nonisolated private static func waitsOnNetwork(_ cmd: Command) -> Bool {
-        cmd == .zmxTree || cmd == .zmxAttach
+        cmd == .zmxTree || cmd == .zmxAttach || cmd == .remoteList || cmd == .remoteKill
     }
 
     /// Read bytes from `conn` up to (and excluding) the first newline. Returns nil on EOF-before-newline, a
@@ -512,7 +513,7 @@ final class ControlServer {
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
                 .windowFullscreen, .windowMinimize,
                 .restoreClear, .restoreCapture, .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxTree,
-                .zmxAttach, .dashboard, .version:
+                .zmxAttach, .remoteList, .remoteAttach, .remoteKill, .dashboard, .version:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
         case .debugAppearance:
             return setDebugAppearance(args: request.args)

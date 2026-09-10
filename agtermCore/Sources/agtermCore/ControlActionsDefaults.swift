@@ -53,6 +53,19 @@ public extension ControlActions {
         ControlResponse(ok: false, error: ControlActionsUnsupported.message("zmx.attach"))
     }
 
+    func listRemoteHostSessions(host _: String) async -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("remote.list"))
+    }
+
+    func attachRemoteHostSession(host _: String, name _: String, window _: String?, create _: Bool,
+                                 command _: String?) async -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("remote.attach"))
+    }
+
+    func killRemoteHostSession(host _: String, name _: String) async -> ControlResponse {
+        ControlResponse(ok: false, error: ControlActionsUnsupported.message("remote.kill"))
+    }
+
     func splitSession(_ target: String?, window: String?, mode: String?, axis _: SplitAxis?) -> ControlResponse {
         splitSession(target, window: window, mode: mode)
     }
